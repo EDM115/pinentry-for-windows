@@ -39,6 +39,8 @@ The Windows release assets are `pfw.x64.exe` and `pfw.arm64.exe`. `install.ps1` 
 
 Use `-InstallDirectory <path>` for a nondefault destination and `-NoRestartAgent` to leave the agent running. The installer uses the GnuPG `bindir` by default; that location may require an elevated installation shell. The executable configured in `gpg-agent.conf` is still started as a normal, interactive user process.
 
+`-Uninstall` restores or removes only its own `pinentry-program` setting. Before deleting the executable, it clears the product's persistent cache and removes broker pairing material and HKCU autostart when associated with that executable. It preserves an autostart pointing to another executable, and stops rather than deleting the binary if credential cleanup fails. Specify `-DataDirectory` or `-BrokerDirectory` when those were configured outside their defaults. Hyper-V service registration under HKLM is not modified automatically; remove it yourself with elevation when no installation uses it. A broker process already running in the current session must also be stopped separately.
+
 For a manual Windows installation, set the following in the Windows GnuPG home directory's `gpg-agent.conf`, then run `gpgconf --kill gpg-agent`:
 
 ```text
@@ -81,6 +83,8 @@ For a manual WSL configuration, set `pinentry-program /home/YOUR_USER/.local/bin
 
 The current-user relay configuration must live on the Linux filesystem with `0700` directory and `0600` private-key permissions. A Windows drive mounted through DrvFs can report broader Linux permissions even after `chmod`, so the relay refuses to load a key that is not private. WSL1 and noninteractive/headless Windows sessions are outside this release's scope.
 
+For WSL uninstall, first run `bash install-wsl.sh --uninstall`. This removes the relay binary and its GnuPG setting but preserves `client.pfx` and the public `client.cer`, printing the certificate path. Revoke that public certificate on Windows with `pfw.exe --revoke-client <broker-directory> <Windows path to client.cer>` (for example through `\\wsl.localhost\...`). Then run `bash install-wsl.sh --uninstall --revoked-on-windows` to remove the Linux identity, even if the relay binary is already gone. Only supply the confirmation flag after Windows revocation, or after the Windows broker identity has itself been removed.
+
 ## Passphrase cache and hardware tokens
 
 Persistent cache is opt-in **per passphrase**. `gpg-agent` must send `OPTION allow-external-password-cache`, a stable software-key identity must be available, and the user must check the save box in Windows Security. Each later cache hit requests a fresh Windows Hello verification. A protected platform WebAuthn credential releases a PRF-derived encryption key; entries are authenticated and encrypted with AES-GCM, partitioned by Windows/paired-WSL origin and key identity. `S PASSWORD_FROM_CACHE` is sent only after a successful Hello-protected retrieval.
@@ -115,6 +119,12 @@ dotnet test PinentryForWindows.slnx -c Debug
 dotnet publish src/PinentryForWindows/PinentryForWindows.csproj -c Release -r win-x64
 pwsh -NoProfile -File tests/Test-PinentryForWindows.ps1
 pwsh -NoProfile -File tests/Test-InstallerConfig.ps1
+```
+
+The WSL installer has an isolated uninstall check that uses a disposable HOME and fake GnuPG executable:
+
+```bash
+bash tests/Test-InstallerWsl.sh
 ```
 
 The protocol script defaults to non-interactive checks with an isolated cache under `artifacts/`. Add `-Interactive -RequireWindowsHelloCache` for Windows Security and Hello checks. Add `-IncludeGpgKeyTests -IncludeCacheTests -IncludeDecryptTest` to exercise a disposable, passphrase-protected GPG key in a temporary GnuPG home; use only the script's dummy passphrase (`teste123` by default). The installer test uses a fake `gpgconf` and never changes the primary agent configuration.
