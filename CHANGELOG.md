@@ -1,5 +1,68 @@
 # Pinentry For Windows Changelog
 
+## [2.0.0](https://github.com/baliestri/pinentry-for-windows/compare/1.2.1..v2.0.0) - 2026-10-11
+
+### ⛰️  Features
+
+- *(bridge)* Discover installed executable for streamed setup - ([2fbf0fe](https://github.com/baliestri/pinentry-for-windows/commit/2fbf0fec41fbdf2a3bd3f919a6ae162044a860c9))
+- *(install)* Add safe Windows and WSL setup - ([79a477d](https://github.com/baliestri/pinentry-for-windows/commit/79a477dcd74d673eaa02109f16c4c83e100297c6))
+- *(logging)* Add opt-in verbose diagnostics on both platforms - ([541f727](https://github.com/baliestri/pinentry-for-windows/commit/541f7278267b42aab154a64102a6b2e997106cb9))
+- *(metrics)* Record prompt latency and helper resource usage - ([61c817a](https://github.com/baliestri/pinentry-for-windows/commit/61c817aea10fbc834a35552b24e511623a012802))
+- *(pinentry)* [**breaking**] Replace legacy server with Windows and WSL bridge - ([74f4887](https://github.com/baliestri/pinentry-for-windows/commit/74f4887d1b5e0e540e8dbff87807c6a6bd7d3153))
+- *(wsl)* Require revocation before deleting relay identity - ([a38ea0f](https://github.com/baliestri/pinentry-for-windows/commit/a38ea0fc8e6e8a07939df9e551be4ab2f930dacf))
+
+### 🐛 Bug Fixes
+
+- *(cache)* Clean up PRF data and native results on errors - ([fbed077](https://github.com/baliestri/pinentry-for-windows/commit/fbed077a30b796c274717ab4264d59cfb7384394))
+- *(changelog)* Recognize unprefixed release tags - ([87b88be](https://github.com/baliestri/pinentry-for-windows/commit/87b88be07f42eb213f03a0a8b9445ef57d6a16b2))
+- *(cli)* Avoid echoing unrecognized arguments - ([05130d8](https://github.com/baliestri/pinentry-for-windows/commit/05130d8c3643be9651236b928beabf93ce6c29e3))
+- *(install)* Clear cache and broker on Windows uninstall - ([c7eb23d](https://github.com/baliestri/pinentry-for-windows/commit/c7eb23d263934a71d685135d6cdcb8efdcbe6202))
+- *(relay)* Reject closure before Assuan greeting - ([f73daef](https://github.com/baliestri/pinentry-for-windows/commit/f73daefd7747c3f5f847cf781846904b423c4f38))
+- *(release)* Extract typos from packaged archive path - ([adc7075](https://github.com/baliestri/pinentry-for-windows/commit/adc7075c9d1590f0850dffbdc52360236b207d0f))
+- *(test)* Use native installer asset in offline fixture - ([c21b767](https://github.com/baliestri/pinentry-for-windows/commit/c21b7674619cf7c0bedb1618b477ed0937f33358))
+- *(ui)* Wipe serialized request text after IPC writes - ([e179757](https://github.com/baliestri/pinentry-for-windows/commit/e179757fcd1da1832afefc068a72e8b0d130fa9f))
+- *(ui)* Set fixed credential titles for Windows and WSL - ([d7740fd](https://github.com/baliestri/pinentry-for-windows/commit/d7740fd1db7b86d118f6bee722ff69542998c51e))
+- *(wsl)* Support streamed setup and activation guidance - ([41cbf58](https://github.com/baliestri/pinentry-for-windows/commit/41cbf587e57b3693e30dedbdb9291e9fc11bd761))
+
+### 🚜 Refactor
+
+- *(tests)* Centralize xUnit imports - ([b2a76e0](https://github.com/baliestri/pinentry-for-windows/commit/b2a76e033f58ff2bed7b52dd2fc9b96ba99bba05))
+- *(tools)* Rename installers to setup scripts - ([fc2dc18](https://github.com/baliestri/pinentry-for-windows/commit/fc2dc182fe874c98dec4b47a520fef70db734eae))
+- *(tools)* Move installer scripts into tools directory - ([9bf567d](https://github.com/baliestri/pinentry-for-windows/commit/9bf567da8ab45fd028dacebfb15e233ff7eaae9e))
+
+### 📚 Documentation
+
+- *(project)* Update pinentry package description - ([e9642c8](https://github.com/baliestri/pinentry-for-windows/commit/e9642c8f2039fd032d1b8d6b4b4e4361b1703218))
+- *(readme)* Document remote setup entrypoints - ([a7bc924](https://github.com/baliestri/pinentry-for-windows/commit/a7bc924f737995a7dee1494060c01fc72d7ac03f))
+- *(readme)* Add prompt screenshots and simplify setup guide - ([0b7e4ef](https://github.com/baliestri/pinentry-for-windows/commit/0b7e4efe2e80a347ae34420195f7402621f619a7))
+- *(readme)* Document CLI, Assuan and verbose diagnostics - ([c063983](https://github.com/baliestri/pinentry-for-windows/commit/c063983c85d357473db89bdb59b77d89fcdc8194))
+- *(readme)* Document local benchmarks and release checks - ([bffa5b4](https://github.com/baliestri/pinentry-for-windows/commit/bffa5b44f5f9c2e6c0449956ad04fb305d60aa1b))
+- *(readme)* Document complete uninstall flow - ([72126a1](https://github.com/baliestri/pinentry-for-windows/commit/72126a1f697af2dac08b2b4a0b24d92b0005d424))
+
+### 🎨 Styling
+
+- *(editor)* Align formatting and solution dictionary - ([3b0c6f6](https://github.com/baliestri/pinentry-for-windows/commit/3b0c6f69c09d5a879378f1042f8865f6584bfb5f))
+- *(project)* Separate property and item groups - ([ef2f63f](https://github.com/baliestri/pinentry-for-windows/commit/ef2f63ffdc90ce6d59d75ef9afddab59bf526ec4))
+- Format scripts, tests and existing documentation - ([e0c6451](https://github.com/baliestri/pinentry-for-windows/commit/e0c64515c2754b9d3393e3d82214067d2794a7e6))
+
+### 🧪 Testing
+
+- *(broker)* Cover revoked client handshake - ([93aea26](https://github.com/baliestri/pinentry-for-windows/commit/93aea2668796b3cc90ba1246366e187b37330f78))
+- *(gpg)* Add isolated OpenPGP card smoke modes - ([9958a05](https://github.com/baliestri/pinentry-for-windows/commit/9958a0550988310ea213bddfbb82ccf638b2a386))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(release)* Promote only validated release candidates - ([dc9f504](https://github.com/baliestri/pinentry-for-windows/commit/dc9f5045769717bc9c808380836cae53c95ac520))
+- *(release)* Validate native x64 and arm64 artifacts - ([98d67d5](https://github.com/baliestri/pinentry-for-windows/commit/98d67d5d1ea1e04ffcb173c6e96a62ea1e197602))
+- *(release)* Publish native x64 and arm64 assets - ([3df65d2](https://github.com/baliestri/pinentry-for-windows/commit/3df65d21172ac1925c46ff47bc560bd7e368f4a7))
+- *(rider)* Track project metadata - ([a0f39f9](https://github.com/baliestri/pinentry-for-windows/commit/a0f39f91ad2b51e7986447d37fece00b5b56487a))
+- *(solution)* List validation scripts - ([9c3ac6a](https://github.com/baliestri/pinentry-for-windows/commit/9c3ac6acaa3874448970a0a280386139461bc002))
+- *(test)* Validate pushes to develop and main - ([71ff9ed](https://github.com/baliestri/pinentry-for-windows/commit/71ff9ede1f7a238f3848216dd93ac36e37f84f94))
+- *(test)* Allow manual native validation runs - ([9118846](https://github.com/baliestri/pinentry-for-windows/commit/91188460fef2220539fb2e7cf7a3e7edf8b85095))
+- *(test)* Validate native binaries on pull requests - ([ea246dd](https://github.com/baliestri/pinentry-for-windows/commit/ea246dde0663ffc6951923fa88d6da4fa9e835d9))
+- *(tools)* Remove ReSharper tool manifest - ([d8799e8](https://github.com/baliestri/pinentry-for-windows/commit/d8799e8d4df771a09dc000f7dbecfa6606b0fe27))
+- *(tools)* Remove unused cleanup script - ([97397cc](https://github.com/baliestri/pinentry-for-windows/commit/97397ccf4c0cd3be12c1e5780362514b7e775c2e))
+
 ## [1.2.1](https://github.com/baliestri/pinentry-for-windows/compare/v1.2.0..1.2.1) - 2026-10-11
 
 ### 🐛 Bug Fixes
