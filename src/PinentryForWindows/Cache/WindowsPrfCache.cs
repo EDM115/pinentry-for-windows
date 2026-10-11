@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using AssuanLibrary.Protocol;
 using PinentryForWindows.Core.Contracts;
+using PinentryForWindows.Diagnostics;
 
 namespace PinentryForWindows.Cache;
 
@@ -20,6 +21,7 @@ internal sealed class WindowsPrfCache(string directory, IPrfProvider provider) :
 
   public async ValueTask<SecretBuffer?> ReadAsync(string origin, string key, CancellationToken ct) {
     if (!IsAvailable) {
+      VerboseLog.Write(VerboseEvent.CacheUnavailable);
       return null;
     }
 
@@ -27,24 +29,33 @@ internal sealed class WindowsPrfCache(string directory, IPrfProvider provider) :
     if (!File.Exists(path) ||
         !File.Exists(CredentialPath) ||
         new FileInfo(path).Length > 4162) {
+      VerboseLog.Write(VerboseEvent.CacheMiss);
       return null;
     }
 
     var encoded = await File.ReadAllBytesAsync(path, ct);
     if (encoded.Length < 66 ||
         !encoded.AsSpan(0, 4).SequenceEqual(_magic)) {
+      VerboseLog.Write(VerboseEvent.CacheInvalid);
       return null;
     }
 
     var length = BinaryPrimitives.ReadUInt16LittleEndian(encoded.AsSpan(64, 2));
     if (length > MAX_SECRET ||
         encoded.Length != 66 + length) {
+      VerboseLog.Write(VerboseEvent.CacheInvalid);
       return null;
     }
 
     var credential = ReadCredentialId();
     var salt = encoded.AsMemory(4, 32);
-    var prf = await provider.DeriveAsync(credential, salt, ct);
+    byte[] prf;
+    try { prf = await provider.DeriveAsync(credential, salt, ct); }
+    catch (Exception) {
+      VerboseLog.Write(VerboseEvent.CacheLookupFailed);
+      throw;
+    }
+
     var context = Context(origin, key);
     byte[]? derived = null;
     var clear = new byte[length];
@@ -55,9 +66,13 @@ internal sealed class WindowsPrfCache(string directory, IPrfProvider provider) :
       aes.Decrypt(encoded.AsSpan(36, 12), encoded.AsSpan(66), encoded.AsSpan(48, 16), clear, context);
       var result = new SecretBuffer(MAX_SECRET);
       result.Append(clear);
+      VerboseLog.Write(VerboseEvent.CacheHit);
       return result;
     }
-    catch (CryptographicException) { return null; }
+    catch (CryptographicException) {
+      VerboseLog.Write(VerboseEvent.CacheInvalid);
+      return null;
+    }
     finally {
       CryptographicOperations.ZeroMemory(prf);
       if (derived is not null) {
@@ -114,6 +129,7 @@ internal sealed class WindowsPrfCache(string directory, IPrfProvider provider) :
       try {
         await File.WriteAllBytesAsync(temporary, envelope, ct);
         File.Move(temporary, target, true);
+        VerboseLog.Write(VerboseEvent.CacheStored);
       }
       finally {
         if (File.Exists(temporary)) {
@@ -122,6 +138,7 @@ internal sealed class WindowsPrfCache(string directory, IPrfProvider provider) :
       }
     }
     catch {
+      VerboseLog.Write(VerboseEvent.CacheStoreFailed);
       if (newCredential) {
         if (File.Exists(CredentialPath)) {
           File.Delete(CredentialPath);

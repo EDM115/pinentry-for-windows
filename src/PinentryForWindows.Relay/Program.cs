@@ -1,6 +1,7 @@
 // Copyright (c) Bruno Sales <me@baliestri.dev>. Licensed under the MIT License.
 // See the LICENSE file in the repository root for full license text.
 
+using PinentryForWindows.Relay.Diagnostics;
 using PinentryForWindows.Relay.Relay;
 using PinentryForWindows.Relay.Security;
 
@@ -16,6 +17,7 @@ Console.CancelKeyPress += (_, e) => {
 };
 
 try {
+  VerboseLog.Write(VerboseEvent.CommandStarted);
   switch (args) {
     case ["--init", var _]: {
       var identity = new RelayIdentity(args[1]);

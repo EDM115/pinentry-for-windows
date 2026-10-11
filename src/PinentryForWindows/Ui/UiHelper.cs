@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using System.IO.Pipes;
+using PinentryForWindows.Diagnostics;
 
 namespace PinentryForWindows.Ui;
 
@@ -26,6 +27,7 @@ internal static class UiHelper {
       return 0;
     }
     catch (Exception) {
+      VerboseLog.Write(VerboseEvent.HelperFailed);
       try { await UiWire.WriteErrorAsync(responses, CancellationToken.None); }
       catch (Exception) {
         /* The parent has already closed the private pipe. */

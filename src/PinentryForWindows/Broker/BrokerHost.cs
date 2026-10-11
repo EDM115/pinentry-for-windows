@@ -8,6 +8,7 @@ using System.Security.Cryptography.X509Certificates;
 using Microsoft.Win32;
 using PinentryForWindows.Core.Contracts;
 using PinentryForWindows.Core.Protocol;
+using PinentryForWindows.Diagnostics;
 using PinentryForWindows.Ui;
 
 namespace PinentryForWindows.Broker;
@@ -29,18 +30,26 @@ internal sealed class BrokerHost(BrokerIdentity identity, IPinentryUi ui, IPinen
     using var permits = new SemaphoreSlim(MAX_SESSIONS);
     var active = new ConcurrentDictionary<long, Task>();
     long nextSession = 0;
+    var waitingForVm = false;
 
     try {
       while (!ct.IsCancellationRequested) {
         var vmId = await TryGetPairedVmAsync(ct);
         if (vmId is null) {
+          if (!waitingForVm) {
+            VerboseLog.Write(VerboseEvent.BrokerWaitingForVm);
+          }
+
+          waitingForVm = true;
           await Task.Delay(_pollInterval, ct);
           continue;
         }
 
+        waitingForVm = false;
         using var listener = new Socket((AddressFamily)34, SocketType.Stream, (ProtocolType)1);
         listener.Bind(new HyperVEndpoint(vmId.Value));
         listener.Listen(MAX_SESSIONS);
+        VerboseLog.Write(VerboseEvent.BrokerListening);
         await Console.Error.WriteLineAsync("Broker listening for a paired WSL client.");
 
         while (!ct.IsCancellationRequested) {
@@ -109,6 +118,7 @@ internal sealed class BrokerHost(BrokerIdentity identity, IPinentryUi ui, IPinen
       try {
         await using var authenticated = await BrokerTls.AuthenticateAsync(network, serverCertificate, identity,
           deadline.Token);
+        VerboseLog.Write(VerboseEvent.BrokerPeerAuthenticated);
         await PinentryProtocol.RunAsync(authenticated.Stream, authenticated.Origin, true,
           new OriginLabelUi(ui, authenticated.Origin), cache, ct, productVersion);
       }

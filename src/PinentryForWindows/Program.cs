@@ -6,6 +6,7 @@ using PinentryForWindows.Broker;
 using PinentryForWindows.Cache;
 using PinentryForWindows.Cli;
 using PinentryForWindows.Core.Protocol;
+using PinentryForWindows.Diagnostics;
 using PinentryForWindows.Transport;
 using PinentryForWindows.Ui;
 
@@ -48,6 +49,7 @@ try {
       return 0;
     }
     case ["--broker", var _]: {
+      VerboseLog.Write(VerboseEvent.BrokerStarted);
       var host = new BrokerHost(new BrokerIdentity(args[1]),
         new UiCoordinator(), PinentryPaths.CreateCache(), productVersion);
       await host.RunAsync(stop.Token);
@@ -56,9 +58,11 @@ try {
   }
 
   if (args.Length != 0) {
+    VerboseLog.Write(VerboseEvent.CommandStarted);
     return await PinentryCli.RunAsync(args, stop.Token);
   }
 
+  VerboseLog.Write(VerboseEvent.LocalSessionStarted);
   await PinentryProtocol.RunAsync(new StandardIoDuplexStream(Console.OpenStandardInput(), Console.OpenStandardOutput()),
     "windows", true, new UiCoordinator(), PinentryPaths.CreateCache(), stop.Token, productVersion);
   return 0;

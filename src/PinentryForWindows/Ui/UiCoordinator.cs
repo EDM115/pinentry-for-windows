@@ -4,11 +4,13 @@
 using System.Diagnostics;
 using System.IO.Pipes;
 using PinentryForWindows.Core.Contracts;
+using PinentryForWindows.Diagnostics;
 
 namespace PinentryForWindows.Ui;
 
 internal sealed class UiCoordinator : IPinentryUi {
   public ValueTask<PasswordPromptResult?> PromptAsync(PromptRequest request, CancellationToken ct) {
+    VerboseLog.Write(VerboseEvent.PromptQueued);
     var task = Task.Run(() => {
       using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
       if (request.TimeoutSeconds > 0) {
@@ -47,6 +49,7 @@ internal sealed class UiCoordinator : IPinentryUi {
     start.ArgumentList.Add(toChild.GetClientHandleAsString());
     start.ArgumentList.Add(fromChild.GetClientHandleAsString());
     using var child = Process.Start(start) ?? throw new InvalidOperationException("Could not start UI helper.");
+    VerboseLog.Write(VerboseEvent.HelperStarted);
     toChild.DisposeLocalCopyOfClientHandle();
     fromChild.DisposeLocalCopyOfClientHandle();
 
@@ -73,6 +76,7 @@ internal sealed class UiCoordinator : IPinentryUi {
       }
 
       child.WaitForExit();
+      VerboseLog.Write(VerboseEvent.HelperFinished);
     }
   }
 }

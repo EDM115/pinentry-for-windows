@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.Net.Sockets;
 using System.Runtime.Versioning;
+using PinentryForWindows.Relay.Diagnostics;
 using PinentryForWindows.Relay.Security;
 using PinentryForWindows.Relay.Transport;
 
@@ -16,8 +17,10 @@ internal static class RelayRunner {
 
   public static async Task RunAsync(RelayIdentity identity, CancellationToken ct) {
     using var clientCertificate = identity.LoadClientCertificate();
+    VerboseLog.Write(VerboseEvent.IdentityLoaded);
     var elapsed = Stopwatch.StartNew();
     Socket? socket = null;
+    VerboseLog.Write(VerboseEvent.VsockConnecting);
     while (socket is null &&
            elapsed.Elapsed < _connectionBudget) {
       ct.ThrowIfCancellationRequested();
@@ -36,13 +39,16 @@ internal static class RelayRunner {
       throw new TimeoutException("Broker was not available within the connection budget.");
     }
 
+    VerboseLog.Write(VerboseEvent.VsockConnected);
     using (socket) {
       await using var network = new VsockStream(socket);
       using var handshake = CancellationTokenSource.CreateLinkedTokenSource(ct);
       handshake.CancelAfter(TimeSpan.FromSeconds(10));
       await using var secure = await RelayTls.AuthenticateAsync(network, identity,
         clientCertificate, handshake.Token);
+      VerboseLog.Write(VerboseEvent.TlsAuthenticated);
       await AssuanRelay.RunAsync(Console.OpenStandardInput(), Console.OpenStandardOutput(), secure, ct);
+      VerboseLog.Write(VerboseEvent.RelayFinished);
     }
   }
 }
