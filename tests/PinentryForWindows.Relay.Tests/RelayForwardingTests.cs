@@ -3,7 +3,6 @@
 
 using System.Text;
 using PinentryForWindows.Relay.Relay;
-using Xunit;
 
 namespace PinentryForWindows.Relay.Tests;
 

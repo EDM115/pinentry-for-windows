@@ -5,7 +5,6 @@ using System.Text;
 using AssuanLibrary.Protocol;
 using PinentryForWindows.Core.Contracts;
 using PinentryForWindows.Core.Protocol;
-using Xunit;
 
 namespace PinentryForWindows.Core.Tests;
 

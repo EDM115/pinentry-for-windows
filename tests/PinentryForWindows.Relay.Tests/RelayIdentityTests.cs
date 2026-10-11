@@ -4,7 +4,6 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using PinentryForWindows.Relay.Security;
-using Xunit;
 
 namespace PinentryForWindows.Relay.Tests;
 

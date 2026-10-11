@@ -2,7 +2,6 @@
 // See the LICENSE file in the repository root for full license text.
 
 using System.Diagnostics;
-using Xunit;
 
 namespace PinentryForWindows.Relay.Tests;
 

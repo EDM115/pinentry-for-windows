@@ -4,7 +4,6 @@
 using System.Diagnostics;
 using System.Runtime.Versioning;
 using PinentryForWindows.Relay.Transport;
-using Xunit;
 
 namespace PinentryForWindows.Relay.Tests;
 
