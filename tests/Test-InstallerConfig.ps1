@@ -41,8 +41,22 @@ try
   $env:PFW_TEST_BINDIR = $installed
   $env:PFW_TEST_HOMEDIR = $gpgHome
 
-  $ownedPath = Join-Path $installed 'pfw.x64.exe'
-  $externalPath = Join-Path $other 'pfw.x64.exe'
+  $architecture = if ($env:PROCESSOR_ARCHITEW6432)
+  {
+    $env:PROCESSOR_ARCHITEW6432
+  }
+  else
+  {
+    $env:PROCESSOR_ARCHITECTURE
+  }
+  $assetName = switch ($architecture.ToUpperInvariant())
+  {
+    'AMD64' { 'pfw.x64.exe' }
+    'ARM64' { 'pfw.arm64.exe' }
+    default { throw "Unsupported test architecture: $architecture" }
+  }
+  $ownedPath = Join-Path $installed $assetName
+  $externalPath = Join-Path $other $assetName
   [System.IO.File]::WriteAllText($ownedPath, 'disposable installed binary')
   [System.IO.File]::WriteAllText($externalPath, 'user-owned binary')
 
@@ -113,7 +127,7 @@ try
   {
     [pscustomobject]@{
       tag_name = 'test'; assets = @(
-        [pscustomobject]@{ name = 'pfw.x64.exe' },
+        [pscustomobject]@{ name = $assetName },
         [pscustomobject]@{ name = 'SHA256SUMS.txt' }
       )
     }
@@ -121,13 +135,13 @@ try
   function Download-Asset
   {
     param($Asset, [string]$DestinationPath)
-    if ($Asset.name -eq 'pfw.x64.exe')
+    if ($Asset.name -eq $assetName)
     {
       [System.IO.File]::WriteAllBytes($DestinationPath, $payload)
     }
     else
     {
-      [System.IO.File]::WriteAllText($DestinationPath, "$expectedHash  pfw.x64.exe`n")
+      [System.IO.File]::WriteAllText($DestinationPath, "$expectedHash  $assetName`n")
     }
   }
   function Confirm-ReplacePinentryProgram
