@@ -56,10 +56,11 @@ internal sealed class WindowsPrfCache(string directory, IPrfProvider provider) :
       throw;
     }
 
-    var context = Context(origin, key);
     byte[]? derived = null;
-    var clear = new byte[length];
+    byte[]? clear = null;
     try {
+      var context = Context(origin, key);
+      clear = new byte[length];
       derived = new byte[32];
       HKDF.DeriveKey(HashAlgorithmName.SHA256, prf, derived, salt.Span, context);
       using var aes = new AesGcm(derived, 16);
@@ -79,7 +80,9 @@ internal sealed class WindowsPrfCache(string directory, IPrfProvider provider) :
         CryptographicOperations.ZeroMemory(derived);
       }
 
-      CryptographicOperations.ZeroMemory(clear);
+      if (clear is not null) {
+        CryptographicOperations.ZeroMemory(clear);
+      }
     }
   }
 
@@ -97,13 +100,13 @@ internal sealed class WindowsPrfCache(string directory, IPrfProvider provider) :
     var credential = newCredential
       ? await provider.CreateCredentialAsync(ct)
       : ReadCredentialId();
-    var salt = RandomNumberGenerator.GetBytes(32);
-    var nonce = RandomNumberGenerator.GetBytes(12);
-    var tag = new byte[16];
-    var ciphertext = new byte[secret.Length];
     byte[]? prf = null;
     byte[]? derived = null;
     try {
+      var salt = RandomNumberGenerator.GetBytes(32);
+      var nonce = RandomNumberGenerator.GetBytes(12);
+      var tag = new byte[16];
+      var ciphertext = new byte[secret.Length];
       prf = await provider.DeriveAsync(credential, salt, ct);
       var context = Context(origin, key);
       derived = new byte[32];

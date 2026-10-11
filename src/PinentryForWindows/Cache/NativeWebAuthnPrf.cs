@@ -99,8 +99,8 @@ internal sealed class NativeWebAuthnPrf : IPrfProvider {
       using var registration = RegisterCancellation(ct, cancellationId);
       var result = PInvoke.WebAuthNAuthenticatorMakeCredential(PInvoke.GetForegroundWindow(),
         in rp, in user, in algorithms, in client, options, out var attestation);
-      result.ThrowOnFailure();
       try {
+        result.ThrowOnFailure();
         if (attestation is null ||
             attestation->pbCredentialId is null ||
             attestation->cbCredentialId is 0 or > 1024) {
@@ -109,7 +109,11 @@ internal sealed class NativeWebAuthnPrf : IPrfProvider {
 
         return new ReadOnlySpan<byte>(attestation->pbCredentialId, (int)attestation->cbCredentialId).ToArray();
       }
-      finally { PInvoke.WebAuthNFreeCredentialAttestation(attestation); }
+      finally {
+        if (attestation is not null) {
+          PInvoke.WebAuthNFreeCredentialAttestation(attestation);
+        }
+      }
     }
   }
 
@@ -150,8 +154,8 @@ internal sealed class NativeWebAuthnPrf : IPrfProvider {
       using var registration = RegisterCancellation(ct, cancellationId);
       var result = PInvoke.WebAuthNAuthenticatorGetAssertion(PInvoke.GetForegroundWindow(),
         RP_ID, in client, options, out var assertion);
-      result.ThrowOnFailure();
       try {
+        result.ThrowOnFailure();
         if (assertion is null ||
             assertion->pbAuthenticatorData is null ||
             assertion->cbAuthenticatorData < 33 ||
@@ -165,12 +169,18 @@ internal sealed class NativeWebAuthnPrf : IPrfProvider {
           throw new InvalidDataException("WebAuthn assertion lacks verified PRF output.");
         }
 
-        var output = new Span<byte>(assertion->pHmacSecret->pbFirst, 32);
-        var owned = output.ToArray();
-        CryptographicOperations.ZeroMemory(output);
-        return owned;
+        return new ReadOnlySpan<byte>(assertion->pHmacSecret->pbFirst, 32).ToArray();
       }
-      finally { PInvoke.WebAuthNFreeAssertion(assertion); }
+      finally {
+        if (assertion is not null) {
+          var secret = assertion->pHmacSecret;
+          if (secret is not null && secret->pbFirst is not null && secret->cbFirst == 32) {
+            CryptographicOperations.ZeroMemory(new Span<byte>(secret->pbFirst, 32));
+          }
+
+          PInvoke.WebAuthNFreeAssertion(assertion);
+        }
+      }
     }
   }
 
