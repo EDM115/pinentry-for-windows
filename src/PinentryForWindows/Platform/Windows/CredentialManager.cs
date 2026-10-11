@@ -13,9 +13,9 @@ namespace PinentryForWindows.Platform.Windows;
 internal static class CredentialManager {
   [Flags]
   public enum PromptForWindowsCredentialsFlag {
-    CredUiWinGeneric = 0x00000001,
-    CredUiWinCheckbox = 0x00000004,
-    CredUiWinInCredOnly = 0x00000020
+    CredUiWinGeneric = (int)CREDUIWIN_FLAGS.CREDUIWIN_GENERIC,
+    CredUiWinCheckbox = (int)CREDUIWIN_FLAGS.CREDUIWIN_CHECKBOX,
+    CredUiWinInCredOnly = (int)CREDUIWIN_FLAGS.CREDUIWIN_IN_CRED_ONLY
   }
 
   private const int CRED_UI_CANCELLED = 1223;
