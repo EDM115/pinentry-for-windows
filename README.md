@@ -129,6 +129,8 @@ bash tests/Test-InstallerWsl.sh
 
 The protocol script defaults to non-interactive checks with an isolated cache under `artifacts/`. Add `-Interactive -RequireWindowsHelloCache` for Windows Security and Hello checks. Add `-IncludeGpgKeyTests -IncludeCacheTests -IncludeDecryptTest` to exercise a disposable, passphrase-protected GPG key in a temporary GnuPG home; use only the script's dummy passphrase (`teste123` by default). The installer test uses a fake `gpgconf` and never changes the primary agent configuration.
 
+To measure the local `GETPIN` dispatch-to-Windows Security API interval, run `pwsh -NoProfile -File tests/Measure-PinentryLatency.ps1 -Samples 21` with a published Windows x64 AOT binary available under `artifacts/release-check-win-x64/`. Cancel every dialog; no password is required. The script reports the first sample separately, median/p95 over the remaining prompts, and helper allocation/memory samples, then removes its numeric-only measurement files. Normal pinentry runs write no timing data; `PFW_LATENCY_LOG` and `PFW_HELPER_METRICS_LOG` enable the respective diagnostics explicitly with absolute output paths. The latency marker is captured immediately before the native credential prompt call and written after the dialog returns, so the user's response time is excluded. Helper allocation is managed allocation during one worker invocation; peak working set and private memory are process-level measurements.
+
 Build and test the Linux relay in WSL2:
 
 ```bash
@@ -138,6 +140,7 @@ dotnet publish src/PinentryForWindows.Relay/PinentryForWindows.Relay.csproj -c R
 ```
 
 The published project outputs are `pfw.exe` and `pfw-relay`; the release workflow stages them as the architecture-suffixed assets listed above. Native Windows Security, Windows Hello, GnuPG and Hyper-V/vsock require real interactive Windows 11/WSL2 validation in addition to unit tests.
+The release workflow also runs tests and a published-binary smoke check on each native x64/ARM64 runner before creating a release; ARM64 remains unverified until those GitHub jobs run.
 
 ## Acknowledgments
 
