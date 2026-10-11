@@ -10,7 +10,8 @@ $ErrorActionPreference = 'Stop'
 $Repository = 'baliestri/pinentry-for-windows'
 $PinentryProgramPattern = '^\s*pinentry-program\s+'
 $PreviousPinentryProgramPrefix = '# pinentry-for-windows previous-pinentry-program: '
-$PinentryExecutablePattern = 'pinentry-for-windows.*.exe'
+$PinentryExecutablePattern = 'pfw.*.exe'
+$PinentryExecutableRegex = '^pfw\.(x64|arm64)\.exe$'
 $ChecksumAssetName = 'SHA256SUMS.txt'
 
 function Write-Step {
@@ -40,9 +41,8 @@ function Get-WindowsRuntimeIdentifierCandidates {
   }
 
   switch ($architecture.ToUpperInvariant()) {
-    'AMD64' { return @('win-x64') }
-    'X86' { return @('win-x86') }
-    'ARM64' { return @('win-arm64', 'win-x64') }
+    'AMD64' { return @('x64') }
+    'ARM64' { return @('arm64') }
     default {
       throw "Unsupported architecture: $architecture."
     }
@@ -110,7 +110,7 @@ function Get-ReleaseAsset {
   )
 
   foreach ($runtimeIdentifier in $RuntimeIdentifiers) {
-    $assetName = "pinentry-for-windows.$runtimeIdentifier.exe"
+    $assetName = "pfw.$runtimeIdentifier.exe"
     $asset = Get-ReleaseAssetByName -Release $Release -AssetName $assetName
 
     if ($null -ne $asset) {
@@ -268,8 +268,8 @@ function Backup-ConfigFile {
     return
   }
 
-  $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
-  $backupPath = "$ConfigPath.pinentry-for-windows.$timestamp.bak"
+  $timestamp = Get-Date -Format 'yyyyMMddHHmmssfff'
+  $backupPath = "$ConfigPath.pinentry-for-windows.$timestamp.$([Guid]::NewGuid().ToString('N')).bak"
   Write-Step "Backing up gpg-agent.conf to $backupPath."
   Copy-Item -LiteralPath $ConfigPath -Destination $backupPath -Force
 }
@@ -302,12 +302,28 @@ function Test-PinentryPathIsPinentryForWindows {
     return $false
   }
 
-  return (Split-Path -Leaf $Path) -like $PinentryExecutablePattern
+  return (Split-Path -Leaf $Path) -match $PinentryExecutableRegex
 }
 
 function Test-PinentryProgramLineIsPinentryForWindows {
   param([Parameter(Mandatory = $true)][string]$Line)
   return Test-PinentryPathIsPinentryForWindows (Get-PinentryProgramPathFromLine $Line)
+}
+
+function Test-PinentryProgramLineInInstallDirectory {
+  param(
+    [Parameter(Mandatory = $true)][string]$Line,
+    [Parameter(Mandatory = $true)][string]$InstallDirectory
+  )
+
+  $path = Get-PinentryProgramPathFromLine $Line
+  if (-not (Test-PinentryPathIsPinentryForWindows $path)) {
+    return $false
+  }
+
+  $directory = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($path))
+  $installed = [System.IO.Path]::TrimEndingDirectorySeparator([System.IO.Path]::GetFullPath($InstallDirectory))
+  return [string]::Equals($directory, $installed, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
 function Get-PreviousPinentryProgramLine {
@@ -397,20 +413,20 @@ function Set-PinentryProgramConfig {
   }
 
   $lines = @(Get-Content -LiteralPath $ConfigPath -ErrorAction SilentlyContinue)
-  $existingLines = Get-PinentryProgramLines $lines
+  $existingLines = @(Get-PinentryProgramLines $lines)
   $newLine = "pinentry-program $(Convert-ToGpgConfigPath $PinentryPath)"
-  $updatedLines = $lines
+  $updatedLines = @($lines)
 
   if ($existingLines.Count -gt 0) {
     $allExistingLinesArePinentryForWindows = $true
     foreach ($existingLine in $existingLines) {
-      if (-not (Test-PinentryProgramLineIsPinentryForWindows $existingLine)) {
+      if (-not (Test-PinentryProgramLineInInstallDirectory -Line $existingLine -InstallDirectory (Split-Path -Parent $PinentryPath))) {
         $allExistingLinesArePinentryForWindows = $false
         break
       }
     }
 
-    $updatedLines = Remove-PinentryProgramAndMetadataLines $lines
+    $updatedLines = @(Remove-PinentryProgramAndMetadataLines $lines)
     $previousLine = Get-PreviousPinentryProgramLine $lines
 
     if ($allExistingLinesArePinentryForWindows) {
@@ -429,7 +445,9 @@ function Set-PinentryProgramConfig {
       }
 
       Write-Step 'Replacing existing pinentry-program setting.'
-      $previousCandidateLine = $existingLines | Where-Object { -not (Test-PinentryProgramLineIsPinentryForWindows $_) } | Select-Object -First 1
+      $previousCandidateLine = $existingLines | Where-Object {
+        -not (Test-PinentryProgramLineInInstallDirectory -Line $_ -InstallDirectory (Split-Path -Parent $PinentryPath))
+      } | Select-Object -First 1
       $updatedLines += "$PreviousPinentryProgramPrefix$($previousCandidateLine.Trim())"
       $updatedLines += $newLine
     }
@@ -450,7 +468,10 @@ function Set-PinentryProgramConfig {
 }
 
 function Remove-PinentryProgramConfig {
-  param([Parameter(Mandatory = $true)][string]$ConfigPath)
+  param(
+    [Parameter(Mandatory = $true)][string]$ConfigPath,
+    [Parameter(Mandatory = $true)][string]$InstallDirectory
+  )
 
   if (-not (Test-Path -LiteralPath $ConfigPath)) {
     Write-Step 'gpg-agent.conf does not exist; no pinentry-program setting to remove.'
@@ -459,7 +480,7 @@ function Remove-PinentryProgramConfig {
 
   Write-Step "Checking gpg-agent.conf at $ConfigPath."
   $lines = @(Get-Content -LiteralPath $ConfigPath -ErrorAction SilentlyContinue)
-  $existingLines = Get-PinentryProgramLines $lines
+  $existingLines = @(Get-PinentryProgramLines $lines)
 
   if ($existingLines.Count -eq 0) {
     Write-Step 'No pinentry-program setting found in gpg-agent.conf.'
@@ -469,7 +490,7 @@ function Remove-PinentryProgramConfig {
   $hasPinentryForWindowsLine = $false
   $hasOtherPinentryProgramLine = $false
   foreach ($existingLine in $existingLines) {
-    if (Test-PinentryProgramLineIsPinentryForWindows $existingLine) {
+    if (Test-PinentryProgramLineInInstallDirectory -Line $existingLine -InstallDirectory $InstallDirectory) {
       $hasPinentryForWindowsLine = $true
     }
     else {
@@ -483,11 +504,10 @@ function Remove-PinentryProgramConfig {
   }
 
   if ($hasOtherPinentryProgramLine) {
-    Write-Step 'At least one pinentry-program setting does not point to Pinentry For Windows; leaving gpg-agent.conf unchanged.'
-    return $false
+    throw 'Both installed and unrelated pinentry-program settings were found. Review gpg-agent.conf before uninstalling.'
   }
 
-  $updatedLines = Remove-PinentryProgramAndMetadataLines $lines
+  $updatedLines = @(Remove-PinentryProgramAndMetadataLines $lines)
   $previousLine = Get-PreviousPinentryProgramLine $lines
 
   if (-not [string]::IsNullOrWhiteSpace($previousLine)) {
@@ -548,14 +568,23 @@ function Get-InstalledPinentryPaths {
   )
 
   $paths = @()
+  $installDirectoryPath = [System.IO.Path]::TrimEndingDirectorySeparator([System.IO.Path]::GetFullPath($Directory))
 
   foreach ($configuredPath in (Get-ConfiguredPinentryForWindowsPaths -ConfigPath $ConfigPath)) {
-    $paths += $configuredPath
+    $configuredDirectory = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($configuredPath))
+    if ([string]::Equals($configuredDirectory, $installDirectoryPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+      $paths += $configuredPath
+    }
+    else {
+      Write-Step "Preserving configured executable outside install directory: $configuredPath."
+    }
   }
 
   if (Test-Path -LiteralPath $Directory) {
     foreach ($file in (Get-ChildItem -LiteralPath $Directory -Filter $PinentryExecutablePattern -File -ErrorAction SilentlyContinue)) {
-      $paths += $file.FullName
+      if ($file.Name -match $PinentryExecutableRegex) {
+        $paths += $file.FullName
+      }
     }
   }
 
@@ -635,15 +664,22 @@ function Install-LatestRelease {
   $checksumAsset = Get-ReleaseChecksumAsset -Release $release
   Write-Step "Selected checksum asset $($checksumAsset.name)."
 
-  $temporaryPath = Join-Path ([System.IO.Path]::GetTempPath()) $asset.name
-  $temporaryChecksumPath = Join-Path ([System.IO.Path]::GetTempPath()) $checksumAsset.name
-  Download-Asset -Asset $asset -DestinationPath $temporaryPath
-  Download-Asset -Asset $checksumAsset -DestinationPath $temporaryChecksumPath
-  Assert-DownloadedAssetChecksum -AssetName $asset.name -AssetPath $temporaryPath -ChecksumPath $temporaryChecksumPath
+  $downloadDirectory = Join-Path $InstallDirectory ('.pfw-download-' + [Guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $downloadDirectory | Out-Null
+  try {
+    $temporaryPath = Join-Path $downloadDirectory $asset.name
+    $temporaryChecksumPath = Join-Path $downloadDirectory $checksumAsset.name
+    Download-Asset -Asset $asset -DestinationPath $temporaryPath
+    Download-Asset -Asset $checksumAsset -DestinationPath $temporaryChecksumPath
+    Assert-DownloadedAssetChecksum -AssetName $asset.name -AssetPath $temporaryPath -ChecksumPath $temporaryChecksumPath
 
-  $installPath = Join-Path $InstallDirectory $asset.name
-  Write-Step "Installing executable to $installPath."
-  Move-Item -LiteralPath $temporaryPath -Destination $installPath -Force
+    $installPath = Join-Path $InstallDirectory $asset.name
+    Write-Step "Installing executable to $installPath."
+    Move-Item -LiteralPath $temporaryPath -Destination $installPath -Force
+  }
+  finally {
+    Remove-Item -LiteralPath $downloadDirectory -Recurse -Force
+  }
 
   $agentConfigPath = Join-Path $HomeDirectory 'gpg-agent.conf'
   $configChanged = Set-PinentryProgramConfig -ConfigPath $agentConfigPath -PinentryPath $installPath
@@ -666,7 +702,7 @@ function Uninstall-PinentryForWindows {
 
   $agentConfigPath = Join-Path $HomeDirectory 'gpg-agent.conf'
   $installedPaths = Get-InstalledPinentryPaths -Directory $InstallDirectory -ConfigPath $agentConfigPath
-  $configChanged = Remove-PinentryProgramConfig -ConfigPath $agentConfigPath
+  $configChanged = Remove-PinentryProgramConfig -ConfigPath $agentConfigPath -InstallDirectory $InstallDirectory
   Remove-InstalledExecutables -Paths $installedPaths
   Restart-GpgAgentIfNeeded -GpgConfPath $GpgConfPath -ConfigChanged $configChanged
   Write-Step 'Uninstall complete.'
