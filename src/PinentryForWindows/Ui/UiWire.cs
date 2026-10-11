@@ -16,26 +16,50 @@ internal static class UiWire {
   private static readonly byte[] _resultMagic = "PFR1"u8.ToArray();
 
   public static async ValueTask WriteRequestAsync(Stream stream, PromptRequest request, CancellationToken ct) {
-    var title = Encode(request.Title, 256);
-    var description = Encode(request.Description, 4096);
-    var user = Encode(request.UserLabel, 256);
-    var prompt = Encode(request.PromptLabel, 256);
     if (request.TimeoutSeconds is < 0 or > 300 ||
         request.GetPinTimestamp < 0) {
       throw new ArgumentOutOfRangeException(nameof(request));
     }
 
-    await stream.WriteAsync(_requestMagic, ct);
-    var header = new byte[11];
-    header[0] = request.OfferSave ? (byte)1 : (byte)0;
-    BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(1), checked((ushort)request.TimeoutSeconds));
-    BinaryPrimitives.WriteInt64LittleEndian(header.AsSpan(3), request.GetPinTimestamp);
-    await stream.WriteAsync(header, ct);
-    await WriteFieldAsync(stream, title, ct);
-    await WriteFieldAsync(stream, description, ct);
-    await WriteFieldAsync(stream, user, ct);
-    await WriteFieldAsync(stream, prompt, ct);
-    await stream.FlushAsync(ct);
+    byte[]? title = null;
+    byte[]? description = null;
+    byte[]? user = null;
+    byte[]? prompt = null;
+    try {
+      title = Encode(request.Title, 256);
+      description = Encode(request.Description, 4096);
+      user = Encode(request.UserLabel, 256);
+      prompt = Encode(request.PromptLabel, 256);
+
+      await stream.WriteAsync(_requestMagic, ct);
+      var header = new byte[11];
+      header[0] = request.OfferSave ? (byte)1 : (byte)0;
+      BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(1), checked((ushort)request.TimeoutSeconds));
+      BinaryPrimitives.WriteInt64LittleEndian(header.AsSpan(3), request.GetPinTimestamp);
+      await stream.WriteAsync(header, ct);
+      await WriteFieldAsync(stream, title, ct);
+      await WriteFieldAsync(stream, description, ct);
+      await WriteFieldAsync(stream, user, ct);
+      await WriteFieldAsync(stream, prompt, ct);
+      await stream.FlushAsync(ct);
+    }
+    finally {
+      if (title is not null) {
+        CryptographicOperations.ZeroMemory(title);
+      }
+
+      if (description is not null) {
+        CryptographicOperations.ZeroMemory(description);
+      }
+
+      if (user is not null) {
+        CryptographicOperations.ZeroMemory(user);
+      }
+
+      if (prompt is not null) {
+        CryptographicOperations.ZeroMemory(prompt);
+      }
+    }
   }
 
   public static async ValueTask<PromptRequest> ReadRequestAsync(Stream stream, CancellationToken ct) {
@@ -131,9 +155,14 @@ internal static class UiWire {
 
   private static byte[] Encode(string text, int maxLength) {
     var bytes = _strictUtf8.GetBytes(text);
-    ArgumentOutOfRangeException.ThrowIfLessThan(maxLength, bytes.Length);
-
-    return bytes;
+    try {
+      ArgumentOutOfRangeException.ThrowIfLessThan(maxLength, bytes.Length);
+      return bytes;
+    }
+    catch {
+      CryptographicOperations.ZeroMemory(bytes);
+      throw;
+    }
   }
 
   private static async ValueTask WriteFieldAsync(Stream stream, byte[] bytes, CancellationToken ct) {

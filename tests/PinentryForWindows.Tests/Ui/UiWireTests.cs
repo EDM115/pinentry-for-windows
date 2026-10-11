@@ -2,6 +2,7 @@
 // See the LICENSE file in the repository root for full license text.
 
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using PinentryForWindows.Core.Contracts;
 using PinentryForWindows.Ui;
 
@@ -56,5 +57,50 @@ public sealed class UiWireTests {
     var decoded = await UiWire.ReadRequestAsync(stream, CancellationToken.None);
     Assert.Equal(timestamp, decoded.GetPinTimestamp);
     Assert.Equal("Description", decoded.Description);
+  }
+
+  [Fact]
+  public async Task Request_text_buffers_are_wiped_after_serialization() {
+    await using var stream = new RecordingRequestStream();
+    var request = new PromptRequest("Sensitive title text", "Sensitive key description",
+      "User label 12345", "Password prompt 123", false, 0);
+
+    await UiWire.WriteRequestAsync(stream, request, CancellationToken.None);
+
+    Assert.Equal(4, stream.BorrowedTextBuffers.Count);
+    Assert.All(stream.BorrowedTextBuffers, bytes => Assert.All(bytes, value => Assert.Equal(0, value)));
+    stream.Position = 0;
+    Assert.Equal(request.Description, (await UiWire.ReadRequestAsync(stream, CancellationToken.None)).Description);
+  }
+
+  [Fact]
+  public async Task Request_text_buffers_are_wiped_when_the_pipe_fails() {
+    await using var stream = new RecordingRequestStream { FailOnTextField = 2 };
+    var request = new PromptRequest("Sensitive title text", "Sensitive key description",
+      "User label 12345", "Password prompt 123", false, 0);
+
+    await Assert.ThrowsAsync<IOException>(async () =>
+      await UiWire.WriteRequestAsync(stream, request, CancellationToken.None));
+    Assert.Equal(2, stream.BorrowedTextBuffers.Count);
+    Assert.All(stream.BorrowedTextBuffers, bytes => Assert.All(bytes, value => Assert.Equal(0, value)));
+  }
+
+  private sealed class RecordingRequestStream : MemoryStream {
+    private int _textFields;
+    public List<byte[]> BorrowedTextBuffers { get; } = [];
+    public int FailOnTextField { get; init; }
+
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) {
+      if (buffer.Length > 11 &&
+          MemoryMarshal.TryGetArray(buffer, out var segment) &&
+          segment.Array is { } bytes) {
+        BorrowedTextBuffers.Add(bytes);
+        if (++_textFields == FailOnTextField) {
+          throw new IOException("Simulated pipe failure.");
+        }
+      }
+
+      return base.WriteAsync(buffer, cancellationToken);
+    }
   }
 }
