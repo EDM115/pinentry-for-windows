@@ -21,6 +21,10 @@ Use -IncludeCacheTests (requires -IncludeGpgKeyTests) to run gpg-agent internal 
 default-cache-ttl to 300 seconds instead of 1 so the cache survives the test sequence.
 Use -GpgCacheHitOnly to create a disposable key, sign once to prime gpg-agent,
 then repeat the signature for visual cache-hit verification; no other tests run.
+Use -CardStatusOnly for a read-only OpenPGP smart-card status query with an
+isolated temporary GNUPGHOME; no PIN or key creation is requested.
+Use -CardSignOnly to sign a disposable message with a signing key already on
+the card. It may ask for the real card PIN; no card key is created or changed.
 Only use a disposable test passphrase. Test cache credentials are removed in cleanup.
 #>
 
@@ -40,7 +44,9 @@ param(
   [switch] $ProvisionGpgOnly,
   [switch] $IncludeDecryptTest,
   [switch] $IncludeCacheTests,
-  [switch] $GpgCacheHitOnly
+  [switch] $GpgCacheHitOnly,
+  [switch] $CardStatusOnly,
+  [switch] $CardSignOnly
 )
 
 Set-StrictMode -Version Latest
@@ -961,6 +967,114 @@ function Invoke-LiveDecryptTest
   }
 }
 
+function Invoke-CardStatusTest
+{
+  param([string] $ExecutablePath, [switch] $Sign)
+
+  Write-Step 'Read-only OpenPGP smart-card status with disposable GNUPGHOME'
+  $gpgCommand = Get-Command gpg -ErrorAction SilentlyContinue
+  $gpgconfCommand = Get-Command gpgconf -ErrorAction SilentlyContinue
+  if ($null -eq $gpgCommand -or $null -eq $gpgconfCommand)
+  {
+    throw 'gpg and gpgconf are required for -CardStatusOnly.'
+  }
+
+  Initialize-ShortTemporaryRoot
+  $tools = New-ShortGpgToolPaths -GpgPath $gpgCommand.Source -GpgConfPath $gpgconfCommand.Source
+  $gpgHome = New-ShortTemporaryDirectory -Name "pfwc$Script:RunId"
+  $Script:CreatedGpgHome = $gpgHome
+  Set-Content -Path (Join-Path $gpgHome 'gpg-agent.conf') `
+    -Value ("pinentry-program " + ($ExecutablePath -replace '\\', '/')) -Encoding ascii
+
+  try
+  {
+    $result = Invoke-CheckedCommand -FilePath $tools.Gpg `
+      -Arguments @('--homedir', $gpgHome, '--batch', '--no-tty', '--card-status') `
+      -Description 'query OpenPGP card status without PIN' `
+      -Environment @{ GNUPGHOME = $gpgHome; PFW_DATA_DIR = $Script:TestDataDirectory }
+    Assert-True ($result.StdOut -match 'Application ID' -and $result.StdOut -match 'OpenPGP') `
+      'GnuPG did not identify an OpenPGP card.'
+    Write-Host '   PASS: OpenPGP card detected; serial and holder information are not displayed.' -ForegroundColor Green
+
+    $signatureLine = $result.StdOut -split "`r?`n" | Where-Object { $_ -like 'Signature key*' } |
+      Select-Object -First 1
+    $fingerprint = if ($signatureLine -match ':') {
+      (($signatureLine -split ':', 2)[1] -replace '\s', '').Trim()
+    } else { '' }
+    $Script:CardSigningFingerprint = if ($fingerprint -match '^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$') {
+      $fingerprint
+    } else { $null }
+    Write-Host $(if ($Script:CardSigningFingerprint) {
+        '   Card signing key: present (fingerprint withheld).'
+      } else {
+        '   Card signing key: not reported by GnuPG.'
+      }) -ForegroundColor Yellow
+
+    $keys = Invoke-CheckedCommand -FilePath $tools.Gpg `
+      -Arguments @('--homedir', $gpgHome, '--batch', '--no-tty', '--with-colons', '--list-secret-keys') `
+      -Description 'check for public card-key metadata in disposable GNUPGHOME' `
+      -Environment @{ GNUPGHOME = $gpgHome; PFW_DATA_DIR = $Script:TestDataDirectory }
+    Write-Host $(if ($keys.StdOut -match '(?m)^sec:') {
+        '   Card key metadata is available in the disposable GnuPG home.'
+      }
+      else {
+        '   No card key metadata is available in the disposable GnuPG home.'
+      }) -ForegroundColor Yellow
+  }
+  catch
+  {
+    Add-Failure 'Read-only OpenPGP card status failed; no PIN or key operation was attempted.'
+    return
+  }
+
+  if ($Sign)
+  {
+    try
+    {
+      Assert-True (-not [string]::IsNullOrWhiteSpace($Script:CardSigningFingerprint)) `
+        'The card has no reported signing key.'
+      $public = Invoke-CheckedCommand -FilePath $gpgCommand.Source `
+        -Arguments @('--batch', '--armor', '--export', $Script:CardSigningFingerprint) `
+        -Description 'read the matching public key from the existing GnuPG keyring'
+      Assert-True ($public.StdOut -match '-----BEGIN PGP PUBLIC KEY BLOCK-----') `
+        'The existing GnuPG keyring has no matching public key.'
+
+      $publicPath = Join-Path $gpgHome 'card-public.asc'
+      [System.IO.File]::WriteAllText($publicPath, $public.StdOut, $Script:Utf8NoBom)
+      $envVars = @{ GNUPGHOME = $gpgHome; PFW_DATA_DIR = $Script:TestDataDirectory }
+      [void](Invoke-CheckedCommand -FilePath $tools.Gpg `
+          -Arguments @('--homedir', $gpgHome, '--batch', '--import', $publicPath) `
+          -Description 'import only the public key into disposable GNUPGHOME' -Environment $envVars)
+      [void](Invoke-CheckedCommand -FilePath $tools.Gpg `
+          -Arguments @('--homedir', $gpgHome, '--batch', '--no-tty', '--card-status') `
+          -Description 'associate the card with the disposable public key' -Environment $envVars)
+      $keys = Invoke-CheckedCommand -FilePath $tools.Gpg `
+        -Arguments @('--homedir', $gpgHome, '--batch', '--with-colons', '--list-secret-keys') `
+        -Description 'check disposable card-key metadata' -Environment $envVars
+      Assert-True ($keys.StdOut -match '(?m)^sec:') `
+        'GnuPG could not associate a signing key on the card with its public key.'
+
+      $message = Join-Path $gpgHome 'card-message.txt'
+      $signature = Join-Path $gpgHome 'card-signature.sig'
+      [System.IO.File]::WriteAllText($message, "Disposable card signing test $Script:RunId", $Script:Utf8NoBom)
+      Write-Host '   ACTION: If Windows Security asks for the card PIN, enter it. Do not expect Remember.' -ForegroundColor Yellow
+      [void](Invoke-CheckedCommand -FilePath $tools.Gpg `
+          -Arguments @('--homedir', $gpgHome, '--batch', '--yes', '--local-user',
+            $Script:CardSigningFingerprint, '--output', $signature, '--detach-sign', $message) `
+          -Description 'sign disposable data with existing card key' -Environment $envVars)
+      Assert-True ((Test-Path -LiteralPath $signature) -and (Get-Item -LiteralPath $signature).Length -gt 0) `
+        'GnuPG did not create a detached signature.'
+      Assert-True (-not (Test-Path -LiteralPath (Join-Path $Script:TestDataDirectory 'cache\hello.cred'))) `
+        'A card PIN created a persistent cache credential.'
+      Write-Host '   PASS: card signature created without a persistent PFW cache credential.' -ForegroundColor Green
+    }
+    catch
+    {
+      Add-Failure 'Card signing did not complete in disposable GNUPGHOME; no key was created or modified.'
+    }
+  }
+}
+
 function Invoke-OptionalGpgKeyTests
 {
   param([string] $ExecutablePath)
@@ -1356,6 +1470,13 @@ function Remove-OptionalGpgKeys
 
 try
 {
+  if (($CardStatusOnly -or $CardSignOnly) -and ($Interactive -or $RequireWindowsHelloCache -or $IncludeDialogTests -or
+      $IncludeCancelTests -or $IncludeGpgKeyTests -or $ProvisionGpgOnly -or $IncludeDecryptTest -or
+      $IncludeCacheTests -or $GpgCacheHitOnly -or ($CardStatusOnly -and $CardSignOnly)))
+  {
+    throw 'Card status/signing mode must run alone (apart from build and timeout options).'
+  }
+
   if ($GpgCacheHitOnly -and ($Interactive -or $RequireWindowsHelloCache -or
     $IncludeDialogTests -or $IncludeCancelTests -or $IncludeGpgKeyTests -or
     $ProvisionGpgOnly -or $IncludeDecryptTest -or $IncludeCacheTests))
@@ -1384,7 +1505,11 @@ try
   $pinentryExe = Get-PinentryExecutable
   Write-Step "Using $pinentryExe"
 
-  if (-not $GpgCacheHitOnly)
+  if ($CardStatusOnly -or $CardSignOnly)
+  {
+    Invoke-CardStatusTest -ExecutablePath $pinentryExe -Sign:$CardSignOnly
+  }
+  elseif (-not $GpgCacheHitOnly)
   {
     Invoke-ProtocolAndOptionTests -ExecutablePath $pinentryExe
 
