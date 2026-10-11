@@ -1,5 +1,5 @@
 param(
-  [Parameter(Mandatory = $true)][string]$ExecutablePath,
+  [string]$ExecutablePath,
   [string]$BrokerDirectory = (Join-Path $env:LOCALAPPDATA 'PinentryForWindows\broker'),
   [string]$Distribution,
   [string]$RelayCertificatePath,
@@ -11,7 +11,62 @@ $ErrorActionPreference = 'Stop'
 $ServiceId = '0000AFBA-FACB-11E6-BD58-64006A7986D3'
 $RunPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $RunName = 'PinentryForWindowsBroker'
-$ExecutablePath = [System.IO.Path]::GetFullPath($ExecutablePath)
+
+function Convert-BridgeGpgPath
+{
+  param([Parameter(Mandatory = $true)][string]$Path)
+
+  $normalized = $Path.Trim()
+  if ($normalized -match '^([A-Za-z])%3[aA][\\/](.*)$')
+  {
+    $normalized = $Matches[1] + ':\' + $Matches[2]
+  }
+  elseif ($normalized -match '^/([A-Za-z])/(.*)$')
+  {
+    $normalized = $Matches[1] + ':\' + $Matches[2]
+  }
+
+  return [System.Uri]::UnescapeDataString(($normalized -replace '/', '\'))
+}
+
+if ([string]::IsNullOrWhiteSpace($ExecutablePath))
+{
+  $gpgConf = Get-Command gpgconf -ErrorAction SilentlyContinue
+  if ($null -eq $gpgConf)
+  {
+    throw 'gpgconf was not found; pass -ExecutablePath for a custom installation.'
+  }
+
+  $bindir = & $gpgConf.Source --list-dirs bindir
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($bindir))
+  {
+    throw 'gpgconf did not return a bindir; pass -ExecutablePath for a custom installation.'
+  }
+
+  $directory = Convert-BridgeGpgPath $bindir
+  if (-not [System.IO.Path]::IsPathFullyQualified($directory))
+  {
+    throw 'gpgconf returned an invalid bindir; pass -ExecutablePath for a custom installation.'
+  }
+
+  $architecture = if ($env:PROCESSOR_ARCHITEW6432)
+  {
+    $env:PROCESSOR_ARCHITEW6432
+  }
+  else
+  {
+    $env:PROCESSOR_ARCHITECTURE
+  }
+  $runtime = switch ($architecture.ToUpperInvariant())
+  {
+    'AMD64' { 'x64' }
+    'ARM64' { 'arm64' }
+    default { throw "Unsupported Windows architecture: $architecture" }
+  }
+  $ExecutablePath = Join-Path $directory "pfw.$runtime.exe"
+}
+
+$ExecutablePath = [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($ExecutablePath))
 $BrokerDirectory = [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($BrokerDirectory))
 
 if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf))

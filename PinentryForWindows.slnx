@@ -17,6 +17,7 @@
   </Folder>
   <Folder Name="/Tests/">
     <File Path="tests/Measure-PinentryLatency.ps1" />
+    <File Path="tests/Test-BridgeSetup.ps1" />
     <File Path="tests/Test-InstallerConfig.ps1" />
     <File Path="tests/Test-InstallerWsl.sh" />
     <File Path="tests/Test-PinentryForWindows.ps1" />
