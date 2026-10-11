@@ -14,9 +14,13 @@ public sealed class OriginLabelUiTests {
     await ui.PromptAsync(new PromptRequest("Pinentry", "Unlock key", "User", "Password:",
       false, 0), CancellationToken.None);
 
-    Assert.Equal("WSL archlinux — Pinentry", inner.LastTitle);
+    Assert.Equal("Pinentry for Windows [archlinux]", inner.LastTitle);
     Assert.DoesNotContain("ABCDEF", inner.LastTitle);
   }
+
+  [Fact]
+  public void Invalid_distribution_name_cannot_be_used_as_a_window_title()
+    => Assert.Throws<ArgumentException>(() => new OriginLabelUi(new CaptureUi(), "wsl:arch\nlinux#ABCDEF"));
 
   private sealed class CaptureUi : IPinentryUi {
     public string LastTitle { get; private set; } = string.Empty;

@@ -751,7 +751,7 @@ function Invoke-InteractivePinentryTests
     New-Step "SETKEYINFO $repeatKey"
     New-Step 'SETDESC Repeat PIN prompt'
     New-Step 'SETREPEAT Repeat PIN prompt'
-    New-Step 'GETPIN' -RequiredPatterns @('(?m)^S PIN_REPEATED$', "(?m)^D $([Regex]::Escape($ExpectedPin) )$") -Instruction "Enter '$ExpectedPin' in both CredUI prompts. The second prompt title should end with '- Repeat'."
+    New-Step 'GETPIN' -RequiredPatterns @('(?m)^S PIN_REPEATED$', "(?m)^D $([Regex]::Escape($ExpectedPin) )$") -Instruction "Enter '$ExpectedPin' in both CredUI prompts. Both titles should be 'Pinentry for Windows'; the second description requests repetition."
   ) -AllowUi)
 
   [void](Invoke-AssuanScenario -Name 'GETPIN repeat mismatch' -ExecutablePath $ExecutablePath -Steps @(
@@ -759,7 +759,7 @@ function Invoke-InteractivePinentryTests
     New-Step 'SETDESC Repeat mismatch prompt'
     New-Step 'SETREPEAT Repeat mismatch prompt'
     New-Step 'SETREPEATERROR Passphrases do not match'
-    New-Step 'GETPIN' -TerminalPattern '^ERR 83886194\b' -Instruction "Enter '$ExpectedPin' in the first CredUI prompt and a different PIN in the second prompt. The second prompt title should end with '- Repeat'."
+    New-Step 'GETPIN' -TerminalPattern '^ERR 83886194\b' -Instruction "Enter '$ExpectedPin' in the first CredUI prompt and a different PIN in the second prompt. Both titles should be 'Pinentry for Windows'."
   ) -AllowUi)
 
   if ($IncludeCancelTests)

@@ -6,6 +6,7 @@ using PinentryForWindows.Core.Contracts;
 namespace PinentryForWindows.Ui;
 
 internal sealed class OriginLabelUi : IPinentryUi {
+  private readonly string _credentialTitle;
   private readonly IPinentryUi _inner;
   private readonly string _prefix;
 
@@ -17,11 +18,18 @@ internal sealed class OriginLabelUi : IPinentryUi {
       throw new ArgumentException("Invalid authenticated WSL origin.", nameof(authenticatedOrigin));
     }
 
-    _prefix = "WSL " + authenticatedOrigin[4..end] + " — ";
+    var distribution = authenticatedOrigin[4..end];
+    if (distribution.Any(character => !char.IsAsciiLetterOrDigit(character) &&
+                                      character is not ('.' or '-' or '_'))) {
+      throw new ArgumentException("Invalid authenticated WSL distribution.", nameof(authenticatedOrigin));
+    }
+
+    _prefix = "WSL " + distribution + " — ";
+    _credentialTitle = "Pinentry for Windows [" + distribution + "]";
   }
 
   public ValueTask<PasswordPromptResult?> PromptAsync(PromptRequest request, CancellationToken ct)
-    => _inner.PromptAsync(request with { Title = _prefix + request.Title }, ct);
+    => _inner.PromptAsync(request with { Title = _credentialTitle }, ct);
 
   public ValueTask<bool> ConfirmAsync(DialogRequest request, CancellationToken ct)
     => _inner.ConfirmAsync(request with { Title = _prefix + request.Title }, ct);

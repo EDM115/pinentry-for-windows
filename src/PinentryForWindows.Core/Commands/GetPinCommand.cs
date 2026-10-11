@@ -11,6 +11,7 @@ using PinentryForWindows.Core.Protocol;
 namespace PinentryForWindows.Core.Commands;
 
 internal sealed class GetPinCommand : ICommandHandler<PinentrySessionState> {
+  private const string CREDENTIAL_TITLE = "Pinentry for Windows";
   public string Name => "GETPIN";
   public string Description => "Ask for a passphrase";
 
@@ -39,7 +40,7 @@ internal sealed class GetPinCommand : ICommandHandler<PinentrySessionState> {
     }
 
     var description = error.Length == 0 ? state.Description : error + Environment.NewLine + state.Description;
-    var request = new PromptRequest(state.Title, description, state.UserLabel,
+    var request = new PromptRequest(CREDENTIAL_TITLE, description, state.UserLabel,
       state.PromptLabel, state.CacheEligible, state.TimeoutSeconds, receivedAt);
     using var first = await PromptAsync(state.Ui, request, ct);
 
@@ -49,7 +50,7 @@ internal sealed class GetPinCommand : ICommandHandler<PinentrySessionState> {
 
     if (state.Repeat) {
       var repeatRequest = request with {
-        Title = state.Title + " - Repeat", Description = state.RepeatDescription, OfferSave = false,
+        Description = state.RepeatDescription, OfferSave = false,
         GetPinTimestamp = Stopwatch.GetTimestamp()
       };
 

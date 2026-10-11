@@ -151,9 +151,43 @@ public sealed class PinentryProtocolTests {
   }
 
   [Fact]
+  public async Task Host_credential_title_ignores_settitle_even_for_repeat() {
+    var ui = new FakeUi("unused", false) { Passwords = new Queue<string>(["same", "same"]) };
+    var output = await RunAsync("SETTITLE Client%20supplied\nSETREPEAT Again\nGETPIN\nBYE\n",
+      ui, new FakeCache());
+
+    Assert.Contains("S PIN_REPEATED", output);
+    Assert.Equal(["Pinentry for Windows", "Pinentry for Windows"], ui.PromptTitles);
+  }
+
+  [Fact]
+  public async Task Settitle_still_applies_to_confirmation_dialogs() {
+    var ui = new FakeUi("unused", false);
+    await RunAsync("SETTITLE Confirm%20this\nCONFIRM\nBYE\n", ui, new FakeCache());
+
+    Assert.Equal("Confirm this", ui.LastDialogTitle);
+  }
+
+  [Fact]
   public async Task Concurrent_connections_keep_prompts_and_answers_isolated() {
     var bothPrompting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var waiting = 0;
+
+    var windowsUi = new FakeUi("local-only", false) { WaitBeforePrompt = MeetAtPrompt };
+    var wslUi = new FakeUi("wsl-only", false) { WaitBeforePrompt = MeetAtPrompt };
+    var responses = await Task.WhenAll(
+      Task.Run(() => RunAsync("SETDESC Local%20description\nGETPIN\nBYE\n", windowsUi, new FakeCache())),
+      Task.Run(() => RunAsync("SETDESC WSL%20description\nGETPIN\nBYE\n", wslUi, new FakeCache(), "wsl:archlinux")));
+
+    Assert.Equal("Pinentry for Windows", windowsUi.LastTitle);
+    Assert.Equal("Pinentry for Windows", wslUi.LastTitle);
+    Assert.Equal("Local description", windowsUi.LastDescription);
+    Assert.Equal("WSL description", wslUi.LastDescription);
+    Assert.Contains("D local-only\nOK", responses[0]);
+    Assert.DoesNotContain("wsl-only", responses[0]);
+    Assert.Contains("D wsl-only\nOK", responses[1]);
+    Assert.DoesNotContain("local-only", responses[1]);
+    return;
 
     async Task MeetAtPrompt() {
       if (Interlocked.Increment(ref waiting) == 2) {
@@ -162,19 +196,6 @@ public sealed class PinentryProtocolTests {
 
       await bothPrompting.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
-
-    var windowsUi = new FakeUi("local-only", false) { WaitBeforePrompt = MeetAtPrompt };
-    var wslUi = new FakeUi("wsl-only", false) { WaitBeforePrompt = MeetAtPrompt };
-    var responses = await Task.WhenAll(
-      Task.Run(() => RunAsync("SETTITLE Windows%20key\nGETPIN\nBYE\n", windowsUi, new FakeCache())),
-      Task.Run(() => RunAsync("SETTITLE WSL%20key\nGETPIN\nBYE\n", wslUi, new FakeCache(), "wsl:archlinux")));
-
-    Assert.Equal("Windows key", windowsUi.LastTitle);
-    Assert.Equal("WSL key", wslUi.LastTitle);
-    Assert.Contains("D local-only\nOK", responses[0]);
-    Assert.DoesNotContain("wsl-only", responses[0]);
-    Assert.Contains("D wsl-only\nOK", responses[1]);
-    Assert.DoesNotContain("local-only", responses[1]);
   }
 
   [Fact]
@@ -204,7 +225,9 @@ public sealed class PinentryProtocolTests {
     public int PromptCount { get; private set; }
     public bool LastOfferSave { get; private set; }
     public string? LastTitle { get; private set; }
+    public List<string> PromptTitles { get; } = [];
     public string? LastDescription { get; private set; }
+    public string? LastDialogTitle { get; private set; }
     public long LastGetPinTimestamp { get; private set; }
     public bool ShouldTimeOut { get; init; }
     public bool ConfirmAnswer { get; init; } = true;
@@ -225,6 +248,7 @@ public sealed class PinentryProtocolTests {
 
       LastOfferSave = request.OfferSave;
       LastTitle = request.Title;
+      PromptTitles.Add(request.Title);
       LastDescription = request.Description;
       LastGetPinTimestamp = request.GetPinTimestamp;
       var secret = new SecretBuffer(4096);
@@ -234,6 +258,7 @@ public sealed class PinentryProtocolTests {
 
     public ValueTask<bool> ConfirmAsync(DialogRequest request, CancellationToken ct) {
       ConfirmCount++;
+      LastDialogTitle = request.Title;
       return ValueTask.FromResult(ConfirmAnswer);
     }
 
