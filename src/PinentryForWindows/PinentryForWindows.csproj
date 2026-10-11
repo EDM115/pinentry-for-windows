@@ -1,9 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <AssemblyName>pfw</AssemblyName>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
     <ApplicationManifest>Properties/app.manifest</ApplicationManifest>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <SupportedOSPlatformVersion>10.0.26100.0</SupportedOSPlatformVersion>
 
     <PublishAot>true</PublishAot>
     <PublishTrimmed>true</PublishTrimmed>
@@ -14,9 +16,7 @@
   <PropertyGroup>
     <Authors>Bruno Sales</Authors>
     <Description>
-      A modern native pinentry implementation for GnuPG on Windows. Uses Windows
-      Credential UI (CredUI) and Windows Hello for a seamless and secure passphrase/PIN entry
-      experience.
+      Native GnuPG pinentry for Windows and WSL2, using Windows Security prompts and optional Windows Hello-protected passphrase caching.
     </Description>
     <Copyright>Copyright (c) $([System.DateTime]::Now.Year) Bruno Sales &lt;me@baliestri.dev&gt;</Copyright>
     <RepositoryUrl>https://github.com/baliestri/pinentry-for-windows</RepositoryUrl>
@@ -25,6 +25,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../PinentryForWindows.Core/PinentryForWindows.Core.csproj" />
     <PackageReference Include="AssuanLibrary" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" />
     <PackageReference Include="Microsoft.Windows.CsWin32">

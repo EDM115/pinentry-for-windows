@@ -1,0 +1,291 @@
+name: Validate and publish release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable version (vMAJOR.MINOR.PATCH)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pinentry-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare changelog candidate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      candidate_sha: ${{ steps.candidate.outputs.sha }}
+      main_base: ${{ steps.preflight.outputs.main_base }}
+      develop_base: ${{ steps.preflight.outputs.develop_base }}
+      branch: ${{ steps.preflight.outputs.branch }}
+    steps:
+      - name: Checkout develop with release history
+        uses: actions/checkout@v5
+        with:
+          ref: refs/heads/develop
+          fetch-depth: 0
+
+      - name: Validate version and snapshot release bases
+        id: preflight
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo 'Expected vMAJOR.MINOR.PATCH.' >&2
+            exit 1
+          }
+          git fetch --tags origin \
+            +refs/heads/main:refs/remotes/origin/main \
+            +refs/heads/develop:refs/remotes/origin/develop
+          [[ -z "$(git ls-remote origin "refs/tags/$VERSION")" ]] || {
+            echo 'Release tag already exists.' >&2
+            exit 1
+          }
+          [[ -z "$(git ls-remote --heads origin "refs/heads/release/$VERSION")" ]] || {
+            echo 'Release candidate branch already exists.' >&2
+            exit 1
+          }
+          [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/develop)" ]] || {
+            echo 'develop changed during checkout; retry the release.' >&2
+            exit 1
+          }
+          {
+            echo "main_base=$(git rev-parse origin/main)"
+            echo "develop_base=$(git rev-parse origin/develop)"
+            echo "branch=release/$VERSION"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install changelog spelling tool
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSLo "$RUNNER_TEMP/typos.tar.gz" \
+            https://github.com/crate-ci/typos/releases/download/v1.42.3/typos-v1.42.3-x86_64-unknown-linux-musl.tar.gz
+          tar -xzf "$RUNNER_TEMP/typos.tar.gz" -C "$RUNNER_TEMP" ./typos
+          chmod +x "$RUNNER_TEMP/typos"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Generate versioned CHANGELOG
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --tag ${{ inputs.version }} --prepend CHANGELOG.md --unreleased
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit candidate and push temporary branch
+        id: candidate
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          BRANCH: ${{ steps.preflight.outputs.branch }}
+        run: |
+          set -euo pipefail
+          version_number="${VERSION#v}"
+          awk -v version="$version_number" '
+            index($0, "## [" version "]") == 1 { found = 1; exit }
+            END { exit !found }
+          ' CHANGELOG.md
+          if git diff --quiet -- CHANGELOG.md; then
+            echo 'The changelog did not change for this version.' >&2
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add -- CHANGELOG.md
+          git commit -m "docs(changelog): update for $VERSION"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          git push origin "HEAD:refs/heads/$BRANCH"
+
+  validate:
+    name: Validate candidate on four native runners
+    needs: prepare
+    permissions:
+      contents: read
+    uses: ./.github/workflows/validate.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.candidate_sha }}
+      upload_assets: true
+
+  promote:
+    name: Promote tested commit to branches and tag
+    needs: [prepare, validate]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout validated candidate
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Check remote refs and push promotion atomically
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          CANDIDATE_SHA: ${{ needs.prepare.outputs.candidate_sha }}
+          MAIN_BASE: ${{ needs.prepare.outputs.main_base }}
+          DEVELOP_BASE: ${{ needs.prepare.outputs.develop_base }}
+          BRANCH: ${{ needs.prepare.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git fetch --tags origin \
+            +refs/heads/main:refs/remotes/origin/main \
+            +refs/heads/develop:refs/remotes/origin/develop \
+            "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+          [[ "$(git rev-parse origin/main)" == "$MAIN_BASE" ]] || {
+            echo 'main advanced while the candidate was tested.' >&2
+            exit 1
+          }
+          [[ "$(git rev-parse origin/develop)" == "$DEVELOP_BASE" ]] || {
+            echo 'develop advanced while the candidate was tested.' >&2
+            exit 1
+          }
+          [[ "$(git rev-parse "refs/remotes/origin/$BRANCH")" == "$CANDIDATE_SHA" ]] || {
+            echo 'The candidate branch changed during validation.' >&2
+            exit 1
+          }
+          if git show-ref --verify --quiet "refs/tags/$VERSION"; then
+            echo 'The release tag was created during validation.' >&2
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git switch -C main "$MAIN_BASE"
+          git merge --no-ff --no-edit "$CANDIDATE_SHA"
+          git switch -C develop "$DEVELOP_BASE"
+          git merge --no-ff --no-edit "$CANDIDATE_SHA"
+          git tag "$VERSION" "$CANDIDATE_SHA"
+          git push --atomic origin \
+            refs/heads/main:refs/heads/main \
+            refs/heads/develop:refs/heads/develop \
+            "refs/tags/$VERSION"
+
+  publish:
+    name: Publish verified release assets
+    needs: [prepare, promote]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout versioned CHANGELOG
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
+
+      - name: Download Windows x64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: pinentry-windows-x64
+          path: dist
+
+      - name: Download Windows ARM64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: pinentry-windows-arm64
+          path: dist
+
+      - name: Download Linux x64 relay
+        uses: actions/download-artifact@v4
+        with:
+          name: pinentry-relay-x64
+          path: dist
+
+      - name: Download Linux ARM64 relay
+        uses: actions/download-artifact@v4
+        with:
+          name: pinentry-relay-arm64
+          path: dist
+
+      - name: Verify asset set, checksums and release notes
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          expected=(pfw.x64.exe pfw.arm64.exe pfw-relay-x64 pfw-relay-arm64)
+          [[ "$(find dist -maxdepth 1 -type f | wc -l)" -eq 4 ]] || {
+            echo 'Expected exactly four release binaries.' >&2
+            exit 1
+          }
+          for asset in "${expected[@]}"; do
+            test -s "dist/$asset" || { echo "Missing or empty asset: $asset" >&2; exit 1; }
+          done
+          (cd dist && LC_ALL=C sha256sum "${expected[@]}" > SHA256SUMS.txt)
+          version_number="${VERSION#v}"
+          awk -v version="$version_number" '
+            index($0, "## [" version "]") == 1 { printing = 1 }
+            printing && /^## \[/ && index($0, "## [" version "]") != 1 { exit }
+            printing { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md || { echo 'No changelog section for this version.' >&2; exit 1; }
+
+      - name: Publish tag and five release files
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          files=(dist/pfw.x64.exe dist/pfw.arm64.exe
+                 dist/pfw-relay-x64 dist/pfw-relay-arm64 dist/SHA256SUMS.txt)
+          if gh release view "$VERSION" --json isDraft --jq .isDraft > "$RUNNER_TEMP/release-state" 2>/dev/null; then
+            if [[ "$(cat "$RUNNER_TEMP/release-state")" == 'true' ]]; then
+              gh release upload "$VERSION" "${files[@]}" --clobber
+              gh release edit "$VERSION" --draft=false --verify-tag \
+                --title "$VERSION" --notes-file release-notes.md
+            else
+              actual="$(gh release view "$VERSION" --json assets --jq '.assets[].name' | LC_ALL=C sort)"
+              expected="$(printf '%s\n' pfw.x64.exe pfw.arm64.exe pfw-relay-x64 pfw-relay-arm64 SHA256SUMS.txt | LC_ALL=C sort)"
+              [[ "$actual" == "$expected" ]] || {
+                echo 'Published release has an unexpected asset set; review it manually.' >&2
+                exit 1
+              }
+              echo 'The release is already published with the expected asset names.'
+            fi
+          else
+            gh release create "$VERSION" "${files[@]}" \
+              --verify-tag --title "$VERSION" --notes-file release-notes.md
+          fi
+
+  cleanup:
+    name: Remove unchanged candidate branch
+    needs: [prepare, validate, promote, publish]
+    if: ${{ always() && needs.prepare.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout for authenticated branch cleanup
+        uses: actions/checkout@v5
+        with:
+          ref: refs/heads/develop
+
+      - name: Delete only this run's candidate branch
+        shell: bash
+        env:
+          BRANCH: ${{ needs.prepare.outputs.branch }}
+          CANDIDATE_SHA: ${{ needs.prepare.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          remote_sha="$(git ls-remote --heads origin "refs/heads/$BRANCH" | cut -f1)"
+          if [[ -z "$remote_sha" ]]; then
+            echo 'Candidate branch already removed.'
+            exit 0
+          fi
+          [[ "$remote_sha" == "$CANDIDATE_SHA" ]] || {
+            echo 'Candidate branch changed; preserving it for review.' >&2
+            exit 1
+          }
+          git push origin --delete "refs/heads/$BRANCH"

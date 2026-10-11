@@ -1,0 +1,14 @@
+// Copyright (c) Bruno Sales <me@baliestri.dev>. Licensed under the MIT License.
+// See the LICENSE file in the repository root for full license text.
+
+namespace PinentryForWindows.Core.Contracts;
+
+public sealed record PromptRequest(
+  string Title,
+  string Description,
+  string UserLabel,
+  string PromptLabel,
+  bool OfferSave,
+  int TimeoutSeconds,
+  long GetPinTimestamp = 0
+);

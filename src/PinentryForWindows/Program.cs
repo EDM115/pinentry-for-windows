@@ -1,75 +1,76 @@
 // Copyright (c) Bruno Sales <me@baliestri.dev>. Licensed under the MIT License.
 // See the LICENSE file in the repository root for full license text.
 
-using AssuanLibrary.Client;
-using AssuanLibrary.Logging;
-using AssuanLibrary.Server;
+using System.Security.Cryptography.X509Certificates;
+using PinentryForWindows.Broker;
+using PinentryForWindows.Cache;
 using PinentryForWindows.Cli;
-using PinentryForWindows.Commands;
-using PinentryForWindows.Configuration;
-using PinentryForWindows.Logging;
+using PinentryForWindows.Core.Protocol;
+using PinentryForWindows.Diagnostics;
 using PinentryForWindows.Transport;
-using PinentryForWindows.Transport.Endpoints;
+using PinentryForWindows.Ui;
 
-if (args.Length > 0) {
-  AppConfiguration.Load();
-  return await CliDispatcher.RunAsync(args);
+if (args is ["--ui-helper", var _, var _]) {
+  return await UiHelper.RunAsync(args[1], args[2]);
 }
 
-AppConfiguration.Load();
-
-using var cts = new CancellationTokenSource();
-
-var loggingOptions = new AssuanLoggingOptions {
-  Logger = FileLogger.CreateDefault(),
-  PayloadMode = AssuanPayloadLoggingMode.Redacted
+using var stop = new CancellationTokenSource();
+var productVersion = typeof(PinentryPaths).Assembly.GetName().Version?.ToString() ?? "unknown";
+Console.CancelKeyPress += (_, e) => {
+  e.Cancel = true;
+  stop.Cancel();
 };
 
-var server = new AssuanServer(ConsoleListenerFactory.Standard, new AssuanServerOptions {
-  Banner = "Pinentry for Windows", // PS: GnuPG uses something like "good to see you again <process id>"
-  Logging = loggingOptions
-});
+try {
+  switch (args) {
+    case ["--init-broker", var _]: {
+      var identity = new BrokerIdentity(args[1]);
+      using var certificate = identity.GetOrCreateServerCertificate();
+      Console.WriteLine($"Broker public certificate: {identity.PublicCertificatePath}");
+      return 0;
+    }
+    case ["--approve-client", var _, var _, var _]:
+      new BrokerIdentity(args[1]).ApproveClient(args[2], args[3]);
+      Console.WriteLine("Client paired.");
+      return 0;
+    case ["--revoke-client", var _, var _]: {
+      using var certificate = X509CertificateLoader.LoadCertificateFromFile(args[2]);
+      new BrokerIdentity(args[1]).RevokeClient(certificate);
+      Console.WriteLine("Client revoked.");
+      return 0;
+    }
+    case ["--reset-broker", var _]:
+      new BrokerIdentity(args[1]).Remove();
+      Console.WriteLine("Broker pairing material removed.");
+      return 0;
+    case ["--vm-id", var _]: {
+      var vmId = await VmIdProvider.TryGetAsync(args[1], stop.Token);
+      Console.WriteLine(vmId?.ToString("D") ?? "not running");
+      return 0;
+    }
+    case ["--broker", var _]: {
+      VerboseLog.Write(VerboseEvent.BrokerStarted);
+      var host = new BrokerHost(new BrokerIdentity(args[1]),
+        new UiCoordinator(), PinentryPaths.CreateCache(), productVersion);
+      await host.RunAsync(stop.Token);
+      return 0;
+    }
+  }
 
-server.RegisterCommandHandler<ByeCommandHandler>();
-server.RegisterCommandHandler<ClearPassphraseCommandHandler>();
-server.RegisterCommandHandler<ConfirmCommandHandler>();
-server.RegisterCommandHandler<GetInfoCommandHandler>();
-server.RegisterCommandHandler<GetPinCommandHandler>();
-server.RegisterCommandHandler<MessageCommandHandler>();
-server.RegisterCommandHandler<OptionCommandHandler>();
-server.RegisterCommandHandler<ResetCommandHandler>();
-server.RegisterCommandHandler<SetCancelButtonCommandHandler>();
-server.RegisterCommandHandler<SetDescriptionCommandHandler>();
-server.RegisterCommandHandler<SetErrorCommandHandler>();
-server.RegisterCommandHandler<SetKeyInfoCommandHandler>();
-server.RegisterCommandHandler<SetNotOkButtonCommandHandler>();
-server.RegisterCommandHandler<SetOkButtonCommandHandler>();
-server.RegisterCommandHandler<SetPromptCommandHandler>();
-server.RegisterCommandHandler<SetRepeatCommandHandler>();
-server.RegisterCommandHandler<SetRepeatErrorCommandHandler>();
-server.RegisterCommandHandler<SetTimeoutCommandHandler>();
-server.RegisterCommandHandler<SetTitleCommandHandler>();
+  if (args.Length != 0) {
+    VerboseLog.Write(VerboseEvent.CommandStarted);
+    return await PinentryCli.RunAsync(args, stop.Token);
+  }
 
-var serverTask = server.RunAsync(ConsoleEndpoint.Standard, cts.Token);
-
-var client = new AssuanClient(ConsoleConnectionFactory.Standard, new AssuanClientOptions {
-  Logging = loggingOptions
-});
-
-await client.ConnectAsync(ConsoleEndpoint.Standard, new Dictionary<string, object>());
-
-if (Console.IsInputRedirected) {
-  using var reader = new StreamReader(Console.OpenStandardInput());
-  while (await reader.ReadLineAsync() is not null) { }
-
-  cts.Cancel();
+  VerboseLog.Write(VerboseEvent.LocalSessionStarted);
+  await PinentryProtocol.RunAsync(new StandardIoDuplexStream(Console.OpenStandardInput(), Console.OpenStandardOutput()),
+    "windows", true, new UiCoordinator(), PinentryPaths.CreateCache(), stop.Token, productVersion);
+  return 0;
 }
-else {
-  Console.CancelKeyPress += (_, e) => {
-    e.Cancel = true;
-    cts.Cancel();
-  };
+catch (OperationCanceledException) {
+  return 1;
 }
-
-await serverTask;
-return 0;
+catch (Exception error) {
+  Console.Error.WriteLine($"Pinentry operation failed: {error.GetType().Name}.");
+  return 1;
+}

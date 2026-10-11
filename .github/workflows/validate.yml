@@ -1,0 +1,196 @@
+name: Validate native executables
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        description: Commit to test and publish
+        required: true
+        type: string
+      upload_assets:
+        description: Upload validated binaries for the release job
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows ${{ matrix.runtime }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, runtime: win-x64, arch: x64 }
+          - { os: windows-11-arm, runtime: win-arm64, arch: arm64 }
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      RUNTIME: ${{ matrix.runtime }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref }}
+          persist-credentials: false
+
+      - name: Install .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Test pinentry, installer and streamed broker setup
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          dotnet test PinentryForWindows.slnx -c Release
+          pwsh -NoProfile -File tests/Test-InstallerConfig.ps1
+          pwsh -NoProfile -NonInteractive -File tests/Test-BridgeSetup.ps1
+
+      - name: Publish ${{ matrix.runtime }} Native AOT
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $publish = Join-Path $env:RUNNER_TEMP "publish-$env:RUNTIME"
+          dotnet publish src/PinentryForWindows/PinentryForWindows.csproj `
+            -c Release -r $env:RUNTIME -o $publish
+
+      - name: Smoke test published Windows pinentry
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $exe = Join-Path $env:RUNNER_TEMP "publish-$env:RUNTIME/pfw.exe"
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Native executable missing.' }
+          & $exe --help | Out-Null
+
+          $start = [System.Diagnostics.ProcessStartInfo]::new($exe)
+          $start.UseShellExecute = $false
+          $start.RedirectStandardInput = $true
+          $start.RedirectStandardOutput = $true
+          $start.RedirectStandardError = $true
+          $start.StandardInputEncoding = [System.Text.UTF8Encoding]::new($false)
+          $process = [System.Diagnostics.Process]::Start($start)
+          try {
+            $timeout = [TimeSpan]::FromSeconds(15)
+            $greeting = $process.StandardOutput.ReadLineAsync().WaitAsync($timeout).GetAwaiter().GetResult()
+            if ($greeting -notmatch '^OK\b') { throw 'Missing Assuan greeting.' }
+            $process.StandardInput.WriteLine('GETINFO flavor')
+            $flavor = $process.StandardOutput.ReadLineAsync().WaitAsync($timeout).GetAwaiter().GetResult()
+            $final = $process.StandardOutput.ReadLineAsync().WaitAsync($timeout).GetAwaiter().GetResult()
+            if ($flavor -ne 'D pinentry-for-windows' -or $final -notmatch '^OK\b') {
+              throw 'Invalid GETINFO response.'
+            }
+            $process.StandardInput.WriteLine('BYE')
+            $bye = $process.StandardOutput.ReadLineAsync().WaitAsync($timeout).GetAwaiter().GetResult()
+            $process.StandardInput.Close()
+            if ($bye -notmatch '^OK\b' -or -not $process.WaitForExit(15000) -or $process.ExitCode -ne 0) {
+              throw 'Assuan session did not exit cleanly.'
+            }
+          }
+          finally {
+            if (-not $process.HasExited) { $process.Kill($true) }
+            $process.Dispose()
+          }
+
+      - name: Stage ${{ matrix.runtime }} release binary
+        if: inputs.upload_assets
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = Join-Path $env:RUNNER_TEMP "publish-$env:RUNTIME/pfw.exe"
+          $destination = Join-Path $env:RUNNER_TEMP "artifacts/pfw.$env:ARCH.exe"
+          New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force | Out-Null
+          Copy-Item -LiteralPath $source -Destination $destination
+          if ((Get-Item -LiteralPath $destination).Length -le 0) { throw 'Empty Windows release asset.' }
+
+      - name: Upload ${{ matrix.runtime }} release binary
+        if: inputs.upload_assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: pinentry-windows-${{ matrix.arch }}
+          path: ${{ runner.temp }}/artifacts/pfw.${{ matrix.arch }}.exe
+          if-no-files-found: error
+          compression-level: 0
+
+  linux:
+    name: Linux ${{ matrix.runtime }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, runtime: linux-x64, arch: x64 }
+          - { os: ubuntu-24.04-arm, runtime: linux-arm64, arch: arm64 }
+    defaults:
+      run:
+        shell: bash
+    env:
+      RUNTIME: ${{ matrix.runtime }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref }}
+          persist-credentials: false
+
+      - name: Install .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install Native AOT toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang zlib1g-dev
+
+      - name: Test Core, relay and isolated WSL setup
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          dotnet test tests/PinentryForWindows.Core.Tests/PinentryForWindows.Core.Tests.csproj -c Release
+          dotnet test tests/PinentryForWindows.Relay.Tests/PinentryForWindows.Relay.Tests.csproj -c Release
+          bash tests/Test-InstallerWsl.sh
+
+      - name: Publish ${{ matrix.runtime }} Native AOT
+        run: |
+          set -euo pipefail
+          dotnet publish src/PinentryForWindows.Relay/PinentryForWindows.Relay.csproj \
+            -c Release -r "$RUNTIME" -o "$RUNNER_TEMP/publish-$RUNTIME"
+
+      - name: Smoke test published Linux relay identity
+        run: |
+          set -euo pipefail
+          executable="$RUNNER_TEMP/publish-$RUNTIME/pfw-relay"
+          test -x "$executable"
+          identity="$(mktemp -d)"
+          trap 'rm -rf -- "$identity"' EXIT
+          "$executable" --init "$identity"
+          test -s "$identity/client.cer"
+          test -s "$identity/client.pfx"
+          "$executable" --remove-identity "$identity"
+          test ! -e "$identity/client.cer"
+          test ! -e "$identity/client.pfx"
+
+      - name: Stage ${{ matrix.runtime }} release binary
+        if: inputs.upload_assets
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/artifacts"
+          install -m 0755 "$RUNNER_TEMP/publish-$RUNTIME/pfw-relay" \
+            "$RUNNER_TEMP/artifacts/pfw-relay-$ARCH"
+          test -s "$RUNNER_TEMP/artifacts/pfw-relay-$ARCH"
+
+      - name: Upload ${{ matrix.runtime }} release binary
+        if: inputs.upload_assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: pinentry-relay-${{ matrix.arch }}
+          path: ${{ runner.temp }}/artifacts/pfw-relay-${{ matrix.arch }}
+          if-no-files-found: error
+          compression-level: 0
