@@ -2,16 +2,23 @@
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
     <File Path=".gitignore" />
+    <File Path="CHANGELOG.md" />
     <File Path="cliff.toml" />
     <File Path="Directory.Build.props" />
     <File Path="Directory.Packages.props" />
     <File Path="LICENSE.md" />
-    <File Path="README.adoc" />
+    <File Path="README.md" />
+    <File Path="THIRD_PARTY_NOTICES.md" />
   </Folder>
   <Folder Name="/Source/">
+    <Project Path="src/PinentryForWindows.Core/PinentryForWindows.Core.csproj" />
     <Project Path="src/PinentryForWindows/PinentryForWindows.csproj" />
+    <Project Path="src/PinentryForWindows.Relay/PinentryForWindows.Relay.csproj" />
   </Folder>
   <Folder Name="/Tests/">
+    <File Path="tests/Test-PinentryForWindows.ps1" />
+    <Project Path="tests/PinentryForWindows.Core.Tests/PinentryForWindows.Core.Tests.csproj" />
+    <Project Path="tests/PinentryForWindows.Relay.Tests/PinentryForWindows.Relay.Tests.csproj" />
     <Project Path="tests/PinentryForWindows.Tests/PinentryForWindows.Tests.csproj" />
   </Folder>
 </Solution>

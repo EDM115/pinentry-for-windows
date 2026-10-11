@@ -1,0 +1,121 @@
+// Copyright (c) Bruno Sales <me@baliestri.dev>. Licensed under the MIT License.
+// See the LICENSE file in the repository root for full license text.
+
+using System.Collections.Concurrent;
+using System.Net.Sockets;
+using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
+using Microsoft.Win32;
+using PinentryForWindows.Core.Contracts;
+using PinentryForWindows.Core.Protocol;
+using PinentryForWindows.Ui;
+
+namespace PinentryForWindows.Broker;
+
+internal sealed class BrokerHost(BrokerIdentity identity, IPinentryUi ui, IPinentryCache cache, string productVersion) {
+  private const int MAX_SESSIONS = 8;
+  private static readonly TimeSpan _pollInterval = TimeSpan.FromSeconds(2);
+
+  public async Task RunAsync(CancellationToken ct) {
+    using var registration = Registry.LocalMachine
+      .OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Virtualization\GuestCommunicationServices\" +
+                  HyperVEndpoint.ServiceId);
+
+    if (registration is null) {
+      throw new InvalidOperationException("Hyper-V socket service is not registered.");
+    }
+
+    using var serverCertificate = identity.GetOrCreateServerCertificate();
+    using var permits = new SemaphoreSlim(MAX_SESSIONS);
+    var active = new ConcurrentDictionary<long, Task>();
+    long nextSession = 0;
+
+    try {
+      while (!ct.IsCancellationRequested) {
+        var vmId = await TryGetPairedVmAsync(ct);
+        if (vmId is null) {
+          await Task.Delay(_pollInterval, ct);
+          continue;
+        }
+
+        using var listener = new Socket((AddressFamily)34, SocketType.Stream, (ProtocolType)1);
+        listener.Bind(new HyperVEndpoint(vmId.Value));
+        listener.Listen(MAX_SESSIONS);
+        await Console.Error.WriteLineAsync("Broker listening for a paired WSL client.");
+
+        while (!ct.IsCancellationRequested) {
+          await permits.WaitAsync(ct);
+          try {
+            using var acceptDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            acceptDeadline.CancelAfter(_pollInterval);
+            Socket socket;
+
+            try { socket = await listener.AcceptAsync(acceptDeadline.Token); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) {
+              permits.Release();
+              if (await TryGetPairedVmAsync(ct) != vmId) {
+                break;
+              }
+
+              continue;
+            }
+
+            var id = Interlocked.Increment(ref nextSession);
+            var session = HandleAsync(socket, serverCertificate, ct);
+            active[id] = session;
+            _ = session.ContinueWith(completed => {
+              active.TryRemove(id, out var _);
+              permits.Release();
+              if (completed.IsFaulted) {
+                Console.Error.WriteLine("Broker session failed.");
+              }
+            }, TaskScheduler.Default);
+          }
+          catch {
+            permits.Release();
+            throw;
+          }
+        }
+      }
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+    finally {
+      using var grace = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+      try { await Task.WhenAll(active.Values).WaitAsync(grace.Token); }
+      catch (OperationCanceledException) {
+        /* Each session retains ownership until it ends. */
+      }
+    }
+  }
+
+  private async Task<Guid?> TryGetPairedVmAsync(CancellationToken ct) {
+    foreach (var distribution in identity.PairedDistributions()) {
+      var vmId = await VmIdProvider.TryGetAsync(distribution, ct);
+      if (vmId is not null) {
+        return vmId;
+      }
+    }
+
+    return null;
+  }
+
+  private async Task HandleAsync(Socket socket, X509Certificate2 serverCertificate, CancellationToken ct) {
+    using (socket) {
+      await using var network = new NetworkStream(socket, false);
+      using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+      deadline.CancelAfter(TimeSpan.FromSeconds(10));
+
+      try {
+        await using var authenticated = await BrokerTls.AuthenticateAsync(network, serverCertificate, identity,
+          deadline.Token);
+        await PinentryProtocol.RunAsync(authenticated.Stream, authenticated.Origin, true,
+          new OriginLabelUi(ui, authenticated.Origin), cache, ct, productVersion);
+      }
+      catch (Exception error) when (error is AuthenticationException or IOException or SocketException or
+                                      OperationCanceledException or InvalidDataException) {
+        await Console.Error.WriteLineAsync($"Broker connection closed: {error.GetType().Name}.");
+      }
+    }
+  }
+}
