@@ -1,137 +1,204 @@
 # Pinentry for Windows
 
-A native Windows pinentry for GnuPG. Passphrase entry uses the **Windows Security** credential window rather than a
-generic Qt dialog. A Linux relay lets a `gpg-agent` in WSL2 show that same window on the interactive Windows desktop.
-Each agent and its keys stay in their original environment; only pinentry requests and responses cross the boundary.
+Use the familiar **Windows Security** window to enter GnuPG passphrases on Windows or in WSL2. An optional, per-key
+cache uses **Windows Hello** before returning a saved passphrase. Your private keys and `gpg-agent` stay where they are;
+the WSL relay forwards only the pinentry conversation to the Windows desktop.
 
-Windows Security displays the full GnuPG key description without an editable username field. Its title is **Pinentry for
-Windows** for a Windows request and **Pinentry for Windows [distroName]** for a paired WSL request, using the
-distribution name assigned during pairing rather than client-provided `SETTITLE`. Windows Hello uses the registered
-credential name **Pinentry for Windows**; the authenticated origin still scopes the cache entry.
+> [!NOTE]
+> These instructions describe the current rewrite. Use a release that contains `pfw.x64.exe` / `pfw.arm64.exe` and
+> `pfw-relay-x64` / `pfw-relay-arm64`. The older v1.2.1 release does not contain this Windows/WSL package; until a new
+> release is published, [build from source](#build-and-test) to try it.
 
-![Windows Security passphrase prompt](.github/images/CredentialManagerPrompt.png)
+## What it looks like
+
+| Signing request from Windows | Signing request from WSL2 (`archlinux`) |
+|:--|:--|
+| <img src=".github/images/windows-security-windows.png" alt="Windows Security passphrase prompt for a Windows signing request" width="420"> | <img src=".github/images/windows-security-wsl.png" alt="Windows Security passphrase prompt labeled Pinentry for Windows [archlinux]" width="420"> |
+
+Both are real Windows Security windows opened with **fictitious signing requests** for these screenshots. The WSL title
+shows the paired distribution; there is no editable username field. You never need to launch a Windows `.exe` from WSL.
 
 ## Requirements
 
-- Windows 11 24H2 or newer and an interactive user session.
-- WSL2 for Linux-to-Windows prompts. Launching Windows `.exe` files from WSL is **not** required.
-- GnuPG in the environment whose keys are used.
-- Windows Hello with a platform WebAuthn credential that supports PRF for persistent passphrase caching. If unavailable,
-  normal passphrase entry still works.
-- .NET 10 SDK to build from source. Release executables are Native AOT.
+- Windows 11 24H2 or newer, signed in to an interactive desktop session.
+- GnuPG on Windows, WSL2, or both, depending on where your keys live.
+- PowerShell 7 (`pwsh`) for the Windows installer and broker setup commands shown below. The WSL installer needs Bash,
+  `curl`, `sha256sum`, and `gpgconf`.
+- For WSL2: a running distribution and permission to register the broker's Hyper-V service **once** in an elevated
+  Windows Command Prompt. Normal prompts do not need elevation.
+- For optional persistent cache: Windows Hello with a platform WebAuthn credential that supports PRF. Passphrase entry
+  still works when this is unavailable.
+- For a source build only: the .NET 10 SDK. Release executables are Native AOT.
 
-## How requests travel
+## Choose where your key lives
 
-| Agent               | `pinentry-program`                   | Secret key location | Window           |
-|---------------------|--------------------------------------|---------------------|------------------|
-| Windows `gpg-agent` | `pfw.x64.exe` or `pfw.arm64.exe`     | Windows keyring     | Windows Security |
-| WSL2 `gpg-agent`    | `pfw-relay-x64` or `pfw-relay-arm64` | WSL keyring         | Windows Security |
+| Your GnuPG key is in | Configure this `pinentry-program` | The prompt appears on |
+|:--|:--|:--|
+| Windows | `pfw.x64.exe` or `pfw.arm64.exe` | Windows desktop |
+| WSL2 | `pfw-relay-x64` or `pfw-relay-arm64` | Windows desktop, labeled with the WSL distribution |
 
-The Windows executable serves the local agent over binary stdin/stdout. For WSL2, the Linux relay forwards that same
-byte protocol through `AF_VSOCK` to a user-session Windows broker listening on `AF_HYPERV`. The stream is protected by
-TLS 1.3 with a separately paired client certificate for each WSL installation. An unpaired connection is rejected
-**before** an Assuan greeting. The broker binds to the current WSL VM ID, which it discovers without elevation through
-`wslinfo --vm-id` in a paired running distribution. The VM ID may change after a WSL restart; it is not the security
-identity of a distribution.
+For WSL2, install the Windows side first, then [pair the distribution](#add-a-wsl2-distribution). Pair each distribution
+separately; Windows and WSL private keys are never copied between them.
 
-AssuanLibrary 2.0.0 handles Assuan framing and sessions. The Linux relay forwards bytes without treating passphrases as
-text. It writes only Assuan to stdout and uses stderr for redacted failure categories.
+## Install on Windows
 
-The source is grouped by responsibility: `PinentryForWindows.Core` contains `Commands/`, `Contracts/`, and `Protocol/`;
-the Windows project contains `Broker/`, `Cache/`, `Cli/`, `Transport/`, and `Ui/`; and `PinentryForWindows.Relay`
-contains `Relay/`, `Security/`, and `Transport/`. Windows tests mirror the corresponding areas. Entry points, project
-files, the application manifest, and the CsWin32 method list remain at their project roots.
-
-## Windows installation
-
-The Windows release assets are `pfw.x64.exe` and `pfw.arm64.exe`. `tools/install.ps1` downloads the matching executable
-and `SHA256SUMS.txt`, checks its hash, updates the Windows `gpg-agent.conf` with confirmation when another pinentry is
-configured, and restarts `gpg-agent` unless requested otherwise:
+Download this repository (or clone it), open PowerShell in its root directory, and run:
 
 ```powershell
-./tools/install.ps1
-./tools/install.ps1 -Update
-./tools/install.ps1 -Uninstall
+pwsh -NoProfile -File .\tools\install.ps1
 ```
 
-Use `-InstallDirectory <path>` for a nondefault destination and `-NoRestartAgent` to leave the agent running. The
-installer uses the GnuPG `bindir` by default; that location may require an elevated installation shell. The executable
-configured in `gpg-agent.conf` is still started as a normal, interactive user process.
+The installer chooses `pfw.x64.exe` or `pfw.arm64.exe`, verifies its release SHA-256 checksum, configures the **Windows**
+`gpg-agent.conf`, and restarts the Windows agent. If it finds another `pinentry-program`, it asks before replacing it.
+The default installation directory is GnuPG's `bindir`, which may require running the installation shell with elevation;
+the installed pinentry itself runs normally as your Windows user.
 
-`-Uninstall` restores or removes only its own `pinentry-program` setting. Before deleting the executable, it clears the
-product's persistent cache and removes broker pairing material and HKCU autostart when associated with that executable.
-It preserves an autostart pointing to another executable, and stops rather than deleting the binary if credential
-cleanup fails. Specify `-DataDirectory` or `-BrokerDirectory` when those were configured outside their defaults. Hyper-V
-service registration under HKLM is not modified automatically; remove it yourself with elevation when no installation
-uses it. A broker process already running in the current session must also be stopped separately.
+To check prerequisites without opening a prompt or creating a Windows Hello credential, run the installed binary:
 
-For a manual Windows installation, set the following in the Windows GnuPG home directory's `gpg-agent.conf`, then run
-`gpgconf --kill gpg-agent`:
+```powershell
+& 'C:\path\to\pfw.x64.exe' --check
+```
+
+Use the actual installed path and architecture. Once configured, signing with an existing Windows GnuPG key brings up
+the **Pinentry for Windows** window. Use `-Update` to reinstall the latest compatible release, `-NoRestartAgent` to keep
+the current agent running, or `-InstallDirectory <path>` to select a destination.
+
+<details>
+<summary>Manual Windows configuration</summary>
+
+Set this line in the Windows GnuPG home directory's `gpg-agent.conf`, then run `gpgconf --kill gpg-agent`:
 
 ```text
 pinentry-program C:/path/to/pfw.x64.exe
 ```
 
-To configure the WSL broker, first create its identity and user-logon startup entry. Run the following as the Windows
-user, supplying the executable installed above:
+</details>
+
+## Add a WSL2 distribution
+
+Do this only if your **private key lives in WSL2**. The Windows executable and the Linux relay must trust each other's
+public certificates; the relay never receives the broker's private key.
+
+1. **Set up the Windows broker** as your normal Windows user, using the installed executable:
+
+   ```powershell
+   pwsh -NoProfile -File .\tools\setup-bridge.ps1 -ExecutablePath 'C:\path\to\pfw.x64.exe'
+   ```
+
+   The script prints the location of public `broker.cer`, a command to start the broker **now**, and a one-time `reg add`
+   command. Run **only that printed registration command** in an elevated Command Prompt. The setup script does not
+   elevate itself. It also configures broker startup at your next Windows sign-in.
+
+2. **Install the relay in the WSL distribution** that owns your GnuPG key. From a checkout accessible in WSL, substitute
+   the mounted path of the `broker.cer` printed in step 1:
+
+   ```bash
+   bash tools/install-wsl.sh --broker-certificate /mnt/c/path/to/broker.cer
+   ```
+
+   The script verifies the download and creates a Linux-only private identity under
+   `~/.config/PinentryForWindows/relay`. Note the printed path to the **public** `client.cer`.
+
+3. **Approve the WSL client on Windows.** Replace `archlinux`, `YOUR_USER`, and the executable path with your actual
+   values; the distribution name becomes the label on the Windows Security window:
+
+   ```powershell
+   pwsh -NoProfile -File .\tools\setup-bridge.ps1 -ExecutablePath 'C:\path\to\pfw.x64.exe' `
+     -Distribution archlinux `
+     -RelayCertificatePath '\\wsl.localhost\archlinux\home\YOUR_USER\.config\PinentryForWindows\relay\client.cer'
+   ```
+
+4. **Start the broker for this session** with the command printed in step 1, in a separate Windows terminal, or sign out
+   and back in to use the configured startup entry. Then activate the relay in WSL:
+
+   ```bash
+   bash tools/install-wsl.sh --broker-certificate /mnt/c/path/to/broker.cer --activate
+   ```
+
+   If WSL's `gpg-agent.conf` already has another pinentry, inspect it first; pass `--replace` only if you want to change
+   it. The script backs up the file before updating it. Signing with an existing **WSL** key now shows
+   **Pinentry for Windows [archlinux]** on the Windows desktop.
+
+Repeat steps 2–4 for each additional distribution. Its client certificate, display label, and cached entries remain
+separate. WSL1 and noninteractive/headless Windows sessions are not supported.
+
+<details>
+<summary>Manual WSL configuration and file permissions</summary>
+
+After pairing, add `pinentry-program /home/YOUR_USER/.local/bin/pfw-relay-x64` to that distribution's `gpg-agent.conf`
+and run `gpgconf --kill gpg-agent`. Keep the relay identity on the Linux filesystem, with `0700` on its directory and
+`0600` on its private key. A Windows-mounted drive may report broader permissions even after `chmod`, so the relay
+refuses to use a key stored there.
+
+</details>
+
+## Sign and use the optional cache
+
+Sign as usual with GnuPG. If it needs a passphrase, enter it in Windows Security; the window title identifies whether
+the request came from Windows or from a paired WSL distribution. Your GnuPG private key stays in its original keyring.
+
+For a **software key**, Windows Security may show **Remember me**. It appears only when `gpg-agent` allows external
+caching and supplies a stable key identity. Check it if you want this passphrase saved; Windows Hello protects the
+initial device credential and asks for a fresh verification whenever the persistent cache is read. The two windows
+below are from that **first-time setup** (later reads also require Hello):
+
+| Create the protected credential | Confirm with Windows Hello |
+|:--|:--|
+| <img src=".github/images/windows-hello-setup.png" alt="Windows Security offering to save the Pinentry for Windows passkey on this device" width="400"> | <img src=".github/images/windows-hello.png" alt="Windows Hello asking for a PIN while creating the protected Pinentry for Windows credential" width="400"> |
+
+If Hello is cancelled or unavailable, enter the passphrase in Windows Security instead. **Smart-card and hardware-token
+PINs are never offered this persistent cache**; the card, `gpg-agent`, and `scdaemon` manage those PINs. Also note that
+`gpg-agent` can temporarily reuse a passphrase from its **own** in-memory cache, so a repeat signature may show no
+pinentry window at all.
+
+To remove the optional persistent cache credential and all its entries, run:
 
 ```powershell
-./tools/setup-bridge.ps1 -ExecutablePath 'C:\path\to\pfw.x64.exe'
+& 'C:\path\to\pfw.x64.exe' --clear-cache
 ```
 
-The script prints the **one-time administrative `reg add` command** for the Hyper-V service ID. Run that command
-yourself in an elevated Command Prompt. It does not elevate or change HKLM on your behalf. It also prints the location
-of the broker's public `broker.cer`. The broker's private TLS material is protected using the current Windows user's
-DPAPI context.
+## Troubleshooting
 
-## WSL2 installation and pairing
+| What you see | What to check |
+|:--|:--|
+| No prompt on Windows | Run `pfw.exe --check` using your installed path, check the Windows `gpg-agent.conf`, then restart that agent with `gpgconf --kill gpg-agent`. |
+| No WSL prompt | Start the broker in your Windows session, confirm the one-time Hyper-V service registration and WSL certificate pairing, and activate the relay in that distribution. Restart its agent with `gpgconf --kill gpg-agent`. |
+| Relay refuses its private key | Keep `~/.config/PinentryForWindows/relay` on the **Linux** filesystem, not under `/mnt/c`; its directory needs `0700` and its private key `0600`. |
+| No **Remember me** box | Card PINs and requests without external-cache permission or a stable software-key identity are not eligible. Normal passphrase entry still works. |
+| Hello cancelled or not available | Type the passphrase normally. `--check` reports prerequisites but does not prove that a PRF assertion succeeds on this device. |
+| Second signature shows no window | `gpg-agent` may already have the passphrase in its own short-lived cache; it did not necessarily access the persistent cache. |
 
-The release assets `pfw-relay-x64` and `pfw-relay-arm64` are Linux Native AOT binaries. From the distribution that owns
-the `gpg-agent`, install the relay and pin the public broker certificate (adjust the mounted Windows path):
+Set `PFW_VERBOSE=1` before starting the affected pinentry, broker, or relay for fixed-category diagnostics on stderr.
+Windows and WSL each read their **own** environment; restart the corresponding `gpg-agent` after changing it. Extra
+events never include passphrases, key descriptions, grips, or certificates.
 
-```bash
-bash tools/install-wsl.sh --broker-certificate /mnt/c/path/to/broker.cer
-```
+## Uninstall
 
-The script verifies the release checksum, installs the relay under `~/.local/bin`, and creates a client certificate
-under `~/.config/PinentryForWindows/relay` with a private key accessible only to that Linux user. It prints the path to
-`client.cer`. On Windows, approve that **public** certificate for the distribution:
+On Windows, run `pwsh -NoProfile -File .\tools\install.ps1 -Uninstall`. It removes only its own GnuPG setting, clears
+the persistent cache and associated broker material, and removes its own HKCU startup entry before deleting the binary.
+Use `-DataDirectory` or `-BrokerDirectory` if you changed their defaults. It does **not** remove the HKLM Hyper-V service
+registration or stop a broker already running; remove the registration with elevation when no installation uses it.
 
-```powershell
-./tools/setup-bridge.ps1 -ExecutablePath 'C:\path\to\pfw.x64.exe' `
-  -Distribution archlinux `
-  -RelayCertificatePath '\\wsl.localhost\archlinux\home\YOUR_USER\.config\PinentryForWindows\relay\client.cer'
-```
+For WSL, first run `bash tools/install-wsl.sh --uninstall`. It removes the agent setting and relay executable but prints
+and preserves the public `client.cer` so you can revoke it on Windows with
+`pfw.exe --revoke-client <broker-directory> <Windows path to client.cer>`. Then run
+`bash tools/install-wsl.sh --uninstall --revoked-on-windows` to remove the Linux identity. Use that last flag only after
+revocation (or after the Windows broker identity has itself been removed).
 
-The broker starts automatically at the next Windows sign-in; to start it in the current session, use the
-`pfw.exe --broker <broker-directory>` command printed by the setup script. Once the broker and service registration are
-ready, activate the WSL agent configuration:
+## Technical reference
 
-```bash
-bash tools/install-wsl.sh --broker-certificate /mnt/c/path/to/broker.cer --activate
-```
+<details>
+<summary>Command-line interface, cache details, and Assuan protocol</summary>
 
-If `gpg-agent.conf` already names another pinentry, inspect it and pass `--replace` only when you intend to change it.
-The script backs up that file before changing it. Each additional WSL distribution gets its own relay credential and
-approval. The broker can serve multiple paired distributions within the WSL2 VM; cache entries remain isolated by the
-paired certificate identity.
+### How the bridge works
 
-For a manual WSL configuration, set `pinentry-program /home/YOUR_USER/.local/bin/pfw-relay-x64` in that distribution's
-`gpg-agent.conf` after pairing and restart its agent with `gpgconf --kill gpg-agent`.
+The Windows executable serves the local `gpg-agent` over binary stdin/stdout. In WSL2, a Linux relay sends the same
+Assuan bytes over `AF_VSOCK` to a Windows broker on `AF_HYPERV`. TLS 1.3 authenticates both sides using separately paired
+certificates; an unpaired client is rejected before the Assuan greeting. The broker follows the current WSL VM ID after
+a restart, while the paired certificate (not that VM ID) identifies the distribution. There is no implicit TCP fallback.
+The relay writes only Assuan to stdout; redacted errors and opt-in diagnostics go to stderr.
 
-The current-user relay configuration must live on the Linux filesystem with `0700` directory and `0600` private-key
-permissions. A Windows drive mounted through DrvFs can report broader Linux permissions even after `chmod`, so the relay
-refuses to load a key that is not private. WSL1 and noninteractive/headless Windows sessions are outside this release's
-scope.
-
-For WSL uninstall, first run `bash tools/install-wsl.sh --uninstall`. This removes the relay binary and its GnuPG
-setting but preserves `client.pfx` and the public `client.cer`, printing the certificate path. Revoke that public
-certificate on Windows with `pfw.exe --revoke-client <broker-directory> <Windows path to client.cer>` (for example
-through `\\wsl.localhost\...`). Then run `bash tools/install-wsl.sh --uninstall --revoked-on-windows` to remove the
-Linux identity, even if the relay binary is already gone. Only supply the confirmation flag after Windows revocation, or
-after the Windows broker identity has itself been removed.
-
-## Command-line interface
+### Command-line interface
 
 The Windows binary accepts these commands (paths are local to Windows):
 
@@ -175,7 +242,7 @@ $env:PFW_VERBOSE = '1' # Windows shell starting pfw.exe or its broker
 export PFW_VERBOSE=1 # WSL shell starting pfw-relay or its gpg-agent
 ```
 
-## Passphrase cache and hardware tokens
+### Cache details and hardware tokens
 
 Persistent cache is opt-in **per passphrase**. `gpg-agent` must send `OPTION allow-external-password-cache`, a stable
 software-key identity must be available, and the user must check the save box in Windows Security. Each later cache hit
@@ -210,7 +277,7 @@ Buffers owned by this application are bounded and wiped after use. Windows crede
 runtime copies, swap, and crash dumps cannot all be erased by the application. A process running as the same user can
 still request an additional Hello operation; users should reject unexpected verification prompts.
 
-## Pinentry protocol behavior
+### Pinentry protocol behavior
 
 | Assuan command                                 | Behavior                                                                                                                                                     |
 |------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -233,6 +300,8 @@ cache read so a rejected passphrase is not immediately reused. Successful repeat
 `S PIN_REPEATED`; a successful Hello-protected cache read sends `S PASSWORD_FROM_CACHE`. Responses use Assuan's bounded
 binary-safe data escaping, and cancellation, timeout, and repeat mismatch return protocol errors rather than a partial
 password.
+
+</details>
 
 ## Build and test
 
@@ -279,6 +348,15 @@ architecture-suffixed assets listed above. Native Windows Security, Windows Hell
 interactive Windows 11/WSL2 validation in addition to unit tests.
 The release workflow also runs tests and a published-binary smoke check on each native x64/ARM64 runner before creating
 a release; ARM64 remains unverified until those GitHub jobs run.
+
+Until a release contains the assets listed at the top of this README, the install scripts cannot download this rewrite.
+Use the published Windows `pfw.exe` with the [manual Windows configuration](#install-on-windows); for WSL, publish the
+relay in the distribution, run its `--init` and `--trust-broker` commands from the [CLI reference](#technical-reference),
+approve its public certificate with `setup-bridge.ps1`, and set the relay's published path as WSL's `pinentry-program`.
+The Windows broker still needs the one-time service registration described above.
+
+The source is grouped by responsibility: `PinentryForWindows.Core` holds Assuan commands and contracts, the Windows
+project handles broker/cache/UI, and `PinentryForWindows.Relay` handles the Linux connection and certificate validation.
 
 ## Acknowledgments
 
