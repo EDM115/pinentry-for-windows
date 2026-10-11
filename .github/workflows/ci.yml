@@ -1,0 +1,20 @@
+name: Validate pull request
+
+on:
+  pull_request:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pinentry-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  native-validation:
+    name: Windows and Linux x64/ARM64
+    uses: ./.github/workflows/validate.yml
+    with:
+      source_ref: ${{ github.sha }}
+      upload_assets: false
