@@ -15,13 +15,17 @@ permissions:
 jobs:
   build-windows:
     name: Build Windows ${{ matrix.runtime }}
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        runtime:
-          - win-x64
-          - win-x86
+        include:
+          - runtime: win-x64
+            arch: x64
+            os: windows-latest
+          - runtime: win-arm64
+            arch: arm64
+            os: windows-11-arm
 
     steps:
       - name: Checkout repository
@@ -49,20 +53,71 @@ jobs:
         run: |
           $artifactDir = Join-Path $env:RUNNER_TEMP "artifacts"
           $publishDir = Join-Path $env:RUNNER_TEMP "publish/${{ matrix.runtime }}"
-          $assetPath = Join-Path $artifactDir "pinentry-for-windows.${{ matrix.runtime }}.exe"
+          $assetPath = Join-Path $artifactDir "pfw.${{ matrix.arch }}.exe"
 
           New-Item -ItemType Directory -Path $artifactDir -Force | Out-Null
-          Copy-Item -LiteralPath (Join-Path $publishDir 'PinentryForWindows.exe') -Destination $assetPath -Force
+          Copy-Item -LiteralPath (Join-Path $publishDir 'pfw.exe') -Destination $assetPath -Force
 
       - name: Upload ${{ matrix.runtime }} artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pinentry-windows-${{ matrix.runtime }}
+          name: pinentry-windows-${{ matrix.arch }}
           path: ${{ runner.temp }}/artifacts/*.exe
           if-no-files-found: error
 
+  build-linux:
+    name: Build WSL relay ${{ matrix.runtime }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runtime: linux-x64
+            arch: x64
+            os: ubuntu-24.04
+          - runtime: linux-arm64
+            arch: arm64
+            os: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ inputs.version }}
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install native AOT toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang zlib1g-dev
+
+      - name: Publish ${{ matrix.runtime }}
+        run: |
+          dotnet publish src/PinentryForWindows.Relay/PinentryForWindows.Relay.csproj \
+            --configuration Release \
+            --runtime "${{ matrix.runtime }}" \
+            --output "${{ runner.temp }}/publish/${{ matrix.runtime }}"
+
+      - name: Prepare ${{ matrix.runtime }} asset
+        run: |
+          mkdir -p "${{ runner.temp }}/artifacts"
+          install -m 0755 "${{ runner.temp }}/publish/${{ matrix.runtime }}/pfw-relay" \
+            "${{ runner.temp }}/artifacts/pfw-relay-${{ matrix.arch }}"
+
+      - name: Upload ${{ matrix.runtime }} artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pinentry-relay-${{ matrix.arch }}
+          path: ${{ runner.temp }}/artifacts/pfw-relay-${{ matrix.arch }}
+          if-no-files-found: error
+
   release-tag:
-    needs: build-windows
+    needs: [build-windows, build-linux]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -74,7 +129,7 @@ jobs:
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: pinentry-windows-*
+          pattern: pinentry-*
           path: dist
           merge-multiple: true
 
@@ -82,7 +137,7 @@ jobs:
         shell: bash
         run: |
           cd dist
-          sha256sum *.exe > SHA256SUMS.txt
+          sha256sum pfw.*.exe pfw-relay-* > SHA256SUMS.txt
 
       - name: Extract changelog
         shell: bash
@@ -108,7 +163,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${{ inputs.version }}" \
-            dist/*.exe \
+            dist/pfw.*.exe \
+            dist/pfw-relay-* \
             dist/SHA256SUMS.txt \
             --title "${{ inputs.version }}" \
             --notes "$RELEASE_NOTES"
