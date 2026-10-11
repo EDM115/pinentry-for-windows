@@ -16,9 +16,7 @@
   <PropertyGroup>
     <Authors>Bruno Sales</Authors>
     <Description>
-      A modern native pinentry implementation for GnuPG on Windows. Uses Windows
-      Credential UI (CredUI) and Windows Hello for a seamless and secure passphrase/PIN entry
-      experience.
+      Native GnuPG pinentry for Windows and WSL2, using Windows Security prompts and optional Windows Hello-protected passphrase caching.
     </Description>
     <Copyright>Copyright (c) $([System.DateTime]::Now.Year) Bruno Sales &lt;me@baliestri.dev&gt;</Copyright>
     <RepositoryUrl>https://github.com/baliestri/pinentry-for-windows</RepositoryUrl>
