@@ -8,6 +8,7 @@ broker_certificate=''
 activate=false
 replace=false
 uninstall=false
+revoked_on_windows=false
 
 while (($#)); do
   case "$1" in
@@ -17,9 +18,15 @@ while (($#)); do
     --activate) activate=true; shift ;;
     --replace) replace=true; shift ;;
     --uninstall) uninstall=true; shift ;;
+    --revoked-on-windows) revoked_on_windows=true; shift ;;
     *) printf 'Unknown option: %s\n' "$1" >&2; exit 2 ;;
   esac
 done
+
+if "$revoked_on_windows" && ! "$uninstall"; then
+  printf '%s\n' '--revoked-on-windows requires --uninstall.' >&2
+  exit 2
+fi
 
 case "$(uname -m)" in
   x86_64) arch='x64' ;;
@@ -47,8 +54,23 @@ if "$uninstall"; then
     fi
   fi
 
+  if "$revoked_on_windows"; then
+    if [[ -x "$installed" ]]; then
+      "$installed" --remove-identity "$config_dir"
+    else
+      rm -f -- "${config_dir}/client.pfx" "${config_dir}/client.cer" "${config_dir}/broker.cer"
+      rmdir -- "$config_dir" 2>/dev/null || true
+    fi
+    printf 'Local relay identity removed after confirmed Windows revocation.\n'
+  elif [[ -f "${config_dir}/client.pfx" || -f "${config_dir}/client.cer" ]]; then
+    printf 'Revoke this public client certificate on Windows before removing the Linux identity:\n'
+    printf '  %s\n' "${config_dir}/client.cer"
+    printf 'On Windows: pfw.exe --revoke-client <broker-directory> <Windows path to client.cer>\n'
+    printf 'Then rerun: bash install-wsl.sh --uninstall --revoked-on-windows\n'
+  fi
+
   if [[ -f "$installed" ]]; then rm -- "$installed"; fi
-  printf 'Relay binary removed. Pairing credentials were preserved for explicit revocation.\n'
+  printf 'Relay binary removed.\n'
   exit 0
 fi
 
