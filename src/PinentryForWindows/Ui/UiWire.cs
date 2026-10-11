@@ -12,7 +12,7 @@ namespace PinentryForWindows.Ui;
 internal static class UiWire {
   private const int MAX_SECRET_BYTES = 4096;
   private static readonly UTF8Encoding _strictUtf8 = new(false, true);
-  private static readonly byte[] _requestMagic = "PFW1"u8.ToArray();
+  private static readonly byte[] _requestMagic = "PFW2"u8.ToArray();
   private static readonly byte[] _resultMagic = "PFR1"u8.ToArray();
 
   public static async ValueTask WriteRequestAsync(Stream stream, PromptRequest request, CancellationToken ct) {
@@ -20,14 +20,16 @@ internal static class UiWire {
     var description = Encode(request.Description, 4096);
     var user = Encode(request.UserLabel, 256);
     var prompt = Encode(request.PromptLabel, 256);
-    if (request.TimeoutSeconds is < 0 or > 300) {
+    if (request.TimeoutSeconds is < 0 or > 300 ||
+        request.GetPinTimestamp < 0) {
       throw new ArgumentOutOfRangeException(nameof(request));
     }
 
     await stream.WriteAsync(_requestMagic, ct);
-    var header = new byte[3];
+    var header = new byte[11];
     header[0] = request.OfferSave ? (byte)1 : (byte)0;
     BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(1), checked((ushort)request.TimeoutSeconds));
+    BinaryPrimitives.WriteInt64LittleEndian(header.AsSpan(3), request.GetPinTimestamp);
     await stream.WriteAsync(header, ct);
     await WriteFieldAsync(stream, title, ct);
     await WriteFieldAsync(stream, description, ct);
@@ -37,7 +39,7 @@ internal static class UiWire {
   }
 
   public static async ValueTask<PromptRequest> ReadRequestAsync(Stream stream, CancellationToken ct) {
-    var header = new byte[7];
+    var header = new byte[15];
     await stream.ReadExactlyAsync(header, ct);
     if (!header.AsSpan(0, 4).SequenceEqual(_requestMagic) ||
         header[4] > 1) {
@@ -45,13 +47,15 @@ internal static class UiWire {
     }
 
     var timeout = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(5));
-    if (timeout > 300) {
+    var timestamp = BinaryPrimitives.ReadInt64LittleEndian(header.AsSpan(7));
+    if (timeout > 300 ||
+        timestamp < 0) {
       throw new InvalidDataException("Invalid UI timeout.");
     }
 
     return new PromptRequest(await ReadFieldAsync(stream, 256, ct),
       await ReadFieldAsync(stream, 4096, ct), await ReadFieldAsync(stream, 256, ct),
-      await ReadFieldAsync(stream, 256, ct), header[4] == 1, timeout);
+      await ReadFieldAsync(stream, 256, ct), header[4] == 1, timeout, timestamp);
   }
 
   public static ValueTask WriteCancelledAsync(Stream stream, CancellationToken ct)

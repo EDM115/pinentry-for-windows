@@ -1,6 +1,7 @@
 // Copyright (c) Bruno Sales <me@baliestri.dev>. Licensed under the MIT License.
 // See the LICENSE file in the repository root for full license text.
 
+using System.Diagnostics;
 using PinentryForWindows.Core.Contracts;
 using PinentryForWindows.Ui;
 
@@ -42,5 +43,18 @@ public sealed class UiWireTests {
     var request = new PromptRequest("Title", new string('X', 5000), "User", "Password:", false, 0);
     await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () =>
       await UiWire.WriteRequestAsync(stream, request, CancellationToken.None));
+  }
+
+  [Fact]
+  public async Task Prompt_request_preserves_getpin_timestamp_across_the_helper_pipe() {
+    using var stream = new MemoryStream();
+    var timestamp = Stopwatch.GetTimestamp();
+    var request = new PromptRequest("Title", "Description", "User", "Password:", false, 0, timestamp);
+    await UiWire.WriteRequestAsync(stream, request, CancellationToken.None);
+    stream.Position = 0;
+
+    var decoded = await UiWire.ReadRequestAsync(stream, CancellationToken.None);
+    Assert.Equal(timestamp, decoded.GetPinTimestamp);
+    Assert.Equal("Description", decoded.Description);
   }
 }

@@ -20,6 +20,7 @@ public sealed class PinentryProtocolTests {
 
     Assert.Contains("D correct horse\nOK", output);
     Assert.Equal(1, ui.PromptCount);
+    Assert.True(ui.LastGetPinTimestamp > 0);
     Assert.Equal(1, cache.WriteCount);
     Assert.DoesNotContain("S PASSWORD_FROM_CACHE", output);
   }
@@ -150,6 +151,33 @@ public sealed class PinentryProtocolTests {
   }
 
   [Fact]
+  public async Task Concurrent_connections_keep_prompts_and_answers_isolated() {
+    var bothPrompting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var waiting = 0;
+
+    async Task MeetAtPrompt() {
+      if (Interlocked.Increment(ref waiting) == 2) {
+        bothPrompting.TrySetResult();
+      }
+
+      await bothPrompting.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    var windowsUi = new FakeUi("local-only", false) { WaitBeforePrompt = MeetAtPrompt };
+    var wslUi = new FakeUi("wsl-only", false) { WaitBeforePrompt = MeetAtPrompt };
+    var responses = await Task.WhenAll(
+      Task.Run(() => RunAsync("SETTITLE Windows%20key\nGETPIN\nBYE\n", windowsUi, new FakeCache())),
+      Task.Run(() => RunAsync("SETTITLE WSL%20key\nGETPIN\nBYE\n", wslUi, new FakeCache(), "wsl:archlinux")));
+
+    Assert.Equal("Windows key", windowsUi.LastTitle);
+    Assert.Equal("WSL key", wslUi.LastTitle);
+    Assert.Contains("D local-only\nOK", responses[0]);
+    Assert.DoesNotContain("wsl-only", responses[0]);
+    Assert.Contains("D wsl-only\nOK", responses[1]);
+    Assert.DoesNotContain("local-only", responses[1]);
+  }
+
+  [Fact]
   public async Task Setdesc_preserves_all_decoded_gpg_key_details() {
     var ui = new FakeUi("dummy", false);
     await RunAsync(
@@ -177,24 +205,31 @@ public sealed class PinentryProtocolTests {
     public bool LastOfferSave { get; private set; }
     public string? LastTitle { get; private set; }
     public string? LastDescription { get; private set; }
+    public long LastGetPinTimestamp { get; private set; }
     public bool ShouldTimeOut { get; init; }
     public bool ConfirmAnswer { get; init; } = true;
     public int ConfirmCount { get; private set; }
     public int MessageCount { get; private set; }
     public Queue<string>? Passwords { get; init; }
+    public Func<Task>? WaitBeforePrompt { get; init; }
 
-    public ValueTask<PasswordPromptResult?> PromptAsync(PromptRequest request, CancellationToken ct) {
+    public async ValueTask<PasswordPromptResult?> PromptAsync(PromptRequest request, CancellationToken ct) {
       PromptCount++;
       if (ShouldTimeOut) {
-        return ValueTask.FromException<PasswordPromptResult?>(new TimeoutException());
+        throw new TimeoutException();
+      }
+
+      if (WaitBeforePrompt is not null) {
+        await WaitBeforePrompt();
       }
 
       LastOfferSave = request.OfferSave;
       LastTitle = request.Title;
       LastDescription = request.Description;
+      LastGetPinTimestamp = request.GetPinTimestamp;
       var secret = new SecretBuffer(4096);
       secret.Append(Encoding.UTF8.GetBytes(Passwords?.Dequeue() ?? password));
-      return ValueTask.FromResult<PasswordPromptResult?>(new PasswordPromptResult(secret, remember));
+      return new PasswordPromptResult(secret, remember);
     }
 
     public ValueTask<bool> ConfirmAsync(DialogRequest request, CancellationToken ct) {

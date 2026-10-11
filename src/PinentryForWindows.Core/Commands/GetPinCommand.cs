@@ -1,6 +1,7 @@
 // Copyright (c) Bruno Sales <me@baliestri.dev>. Licensed under the MIT License.
 // See the LICENSE file in the repository root for full license text.
 
+using System.Diagnostics;
 using System.Security.Cryptography;
 using AssuanLibrary.Protocol;
 using AssuanLibrary.Server;
@@ -14,6 +15,7 @@ internal sealed class GetPinCommand : ICommandHandler<PinentrySessionState> {
   public string Description => "Ask for a passphrase";
 
   public async ValueTask HandleAsync(CommandContext<PinentrySessionState> context, CancellationToken ct) {
+    var receivedAt = Stopwatch.GetTimestamp();
     var state = context.State;
     var error = state.Error;
     state.Error = string.Empty;
@@ -38,7 +40,7 @@ internal sealed class GetPinCommand : ICommandHandler<PinentrySessionState> {
 
     var description = error.Length == 0 ? state.Description : error + Environment.NewLine + state.Description;
     var request = new PromptRequest(state.Title, description, state.UserLabel,
-      state.PromptLabel, state.CacheEligible, state.TimeoutSeconds);
+      state.PromptLabel, state.CacheEligible, state.TimeoutSeconds, receivedAt);
     using var first = await PromptAsync(state.Ui, request, ct);
 
     if (first is null) {
@@ -47,7 +49,8 @@ internal sealed class GetPinCommand : ICommandHandler<PinentrySessionState> {
 
     if (state.Repeat) {
       var repeatRequest = request with {
-        Title = state.Title + " - Repeat", Description = state.RepeatDescription, OfferSave = false
+        Title = state.Title + " - Repeat", Description = state.RepeatDescription, OfferSave = false,
+        GetPinTimestamp = Stopwatch.GetTimestamp()
       };
 
       using var second = await PromptAsync(state.Ui, repeatRequest, ct);

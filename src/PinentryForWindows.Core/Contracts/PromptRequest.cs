@@ -9,5 +9,6 @@ public sealed record PromptRequest(
   string UserLabel,
   string PromptLabel,
   bool OfferSave,
-  int TimeoutSeconds
+  int TimeoutSeconds,
+  long GetPinTimestamp = 0
 );

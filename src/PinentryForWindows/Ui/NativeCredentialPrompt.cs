@@ -1,6 +1,7 @@
 // Copyright (c) Bruno Sales <me@baliestri.dev>. Licensed under the MIT License.
 // See the LICENSE file in the repository root for full license text.
 
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -48,8 +49,13 @@ internal static unsafe partial class NativeCredentialPrompt {
 
         var flags = CREDUIWIN_GENERIC | CREDUIWIN_IN_CRED_ONLY |
                     (request.OfferSave ? CREDUIWIN_CHECKBOX : 0);
-        var result = CredUiPromptForWindowsCredentialsW(ref info, 0, ref authPackage,
-          input, inputLength, out output, out outputLength, ref save, flags);
+        var beforeCall = Stopwatch.GetTimestamp();
+        uint result;
+        try {
+          result = CredUiPromptForWindowsCredentialsW(ref info, 0, ref authPackage,
+            input, inputLength, out output, out outputLength, ref save, flags);
+        }
+        finally { PinentryLatency.Record(request.GetPinTimestamp, beforeCall); }
         if (result == ERROR_CANCELLED) {
           return null;
         }
