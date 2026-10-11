@@ -1,15 +1,16 @@
-name: Validate pull request
+name: Validate native builds
 
 on:
   pull_request:
     branches: [develop, main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: pinentry-pr-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: pinentry-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   native-validation:
