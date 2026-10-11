@@ -12,8 +12,10 @@ using PinentryForWindows.Broker;
 namespace PinentryForWindows.Tests.Broker;
 
 public sealed class BrokerTlsTests {
-  [Fact]
-  public async Task Unpaired_client_cannot_receive_an_assuan_greeting() {
+  [Theory]
+  [InlineData(false)]
+  [InlineData(true)]
+  public async Task Unpaired_or_revoked_client_cannot_receive_an_assuan_greeting(bool revokeAfterPairing) {
     var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
     var directory = Path.Combine(root, "artifacts", "tests", Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(directory);
@@ -27,6 +29,15 @@ public sealed class BrokerTlsTests {
       using var clientCertificate = X509CertificateLoader.LoadPkcs12(
         candidate.Export(X509ContentType.Pkcs12, string.Empty), string.Empty,
         X509KeyStorageFlags.UserKeySet);
+      if (revokeAfterPairing) {
+        var publicPath = Path.Combine(directory, "client.cer");
+        File.WriteAllBytes(publicPath, candidate.Export(X509ContentType.Cert));
+        identity.ApproveClient(publicPath, "wsl:archlinux");
+        Assert.NotNull(identity.OriginFor(clientCertificate));
+        identity.RevokeClient(clientCertificate);
+      }
+
+      Assert.Null(identity.OriginFor(clientCertificate));
       var listener = new TcpListener(IPAddress.Loopback, 0);
       listener.Start();
       try {
