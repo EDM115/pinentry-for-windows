@@ -37,7 +37,7 @@ internal static class PinentryCli {
       return 0;
     }
 
-    await Console.Error.WriteLineAsync($"Unknown argument: {args[0]}");
+    await Console.Error.WriteLineAsync("Unsupported command.");
     PrintUsage(Console.Error);
     return 2;
   }

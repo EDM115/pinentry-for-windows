@@ -38,9 +38,11 @@ public sealed class CliCompatibilityTests {
   public async Task Unknown_command_explains_available_cli_commands() {
     var directory = TestDirectory();
     try {
-      var result = await RunAsync(directory, "--unknown-argument");
+      const string SENSITIVE_ARGUMENT = "sensitive-cli-argument";
+      var result = await RunAsync(directory, SENSITIVE_ARGUMENT);
       Assert.NotEqual(0, result.ExitCode);
       Assert.Contains("Usage", result.StdErr);
+      Assert.DoesNotContain(SENSITIVE_ARGUMENT, result.StdErr);
     }
     finally { Directory.Delete(directory, true); }
   }
