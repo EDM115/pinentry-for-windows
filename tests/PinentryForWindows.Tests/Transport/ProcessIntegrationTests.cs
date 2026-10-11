@@ -10,7 +10,9 @@ public sealed class ProcessIntegrationTests {
   [Fact]
   public async Task Local_process_handles_assuan_without_text_reencoding() {
     var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
-    var executable = Path.Combine(root, "src", "PinentryForWindows", "bin", "Debug",
+    var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name
+                        ?? throw new InvalidOperationException("Test build configuration could not be determined.");
+    var executable = Path.Combine(root, "src", "PinentryForWindows", "bin", configuration,
       "net10.0-windows10.0.26100.0", "pfw.exe");
     Assert.True(File.Exists(executable), "Build the Windows executable before running process tests.");
 

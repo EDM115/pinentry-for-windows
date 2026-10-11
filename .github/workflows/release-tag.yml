@@ -39,6 +39,10 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Test on ${{ matrix.runtime }}
+        shell: pwsh
+        run: dotnet test PinentryForWindows.slnx --configuration Release
+
       - name: Publish ${{ matrix.runtime }}
         shell: pwsh
         run: |
@@ -47,6 +51,13 @@ jobs:
             --configuration Release `
             --runtime "${{ matrix.runtime }}" `
             --output $publishDir
+
+      - name: Smoke test ${{ matrix.runtime }} executable
+        shell: pwsh
+        run: |
+          $executable = Join-Path $env:RUNNER_TEMP "publish/${{ matrix.runtime }}/pfw.exe"
+          & $executable --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Published pinentry failed to start: $LASTEXITCODE" }
 
       - name: Prepare ${{ matrix.runtime }} asset
         shell: pwsh
@@ -96,12 +107,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang zlib1g-dev
 
+      - name: Test Core and relay on ${{ matrix.runtime }}
+        run: |
+          dotnet test tests/PinentryForWindows.Core.Tests/PinentryForWindows.Core.Tests.csproj -c Release
+          dotnet test tests/PinentryForWindows.Relay.Tests/PinentryForWindows.Relay.Tests.csproj -c Release
+
       - name: Publish ${{ matrix.runtime }}
         run: |
           dotnet publish src/PinentryForWindows.Relay/PinentryForWindows.Relay.csproj \
             --configuration Release \
             --runtime "${{ matrix.runtime }}" \
             --output "${{ runner.temp }}/publish/${{ matrix.runtime }}"
+
+      - name: Smoke test ${{ matrix.runtime }} relay
+        run: |
+          executable="${{ runner.temp }}/publish/${{ matrix.runtime }}/pfw-relay"
+          test -x "$executable"
+          "$executable" --remove-identity "${{ runner.temp }}/pfw-relay-smoke-unused"
 
       - name: Prepare ${{ matrix.runtime }} asset
         run: |
