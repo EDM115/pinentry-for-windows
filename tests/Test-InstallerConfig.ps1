@@ -1,6 +1,7 @@
 <#
-Runs the uninstall path against a disposable GnuPG home and fake gpgconf.
-No primary GnuPG configuration or agent is touched.
+Exercises install and uninstall against a disposable GnuPG home and fake gpgconf.
+Broker cleanup and autostart changes are mocked; no primary GnuPG configuration,
+agent, or user registry entry is changed.
 #>
 
 Set-StrictMode -Version Latest
@@ -12,6 +13,8 @@ $fakeBin = Join-Path $root 'fake-bin'
 $installed = Join-Path $root 'installed'
 $other = Join-Path $root 'other'
 $gpgHome = Join-Path $root 'gpg-home'
+$testData = Join-Path $root 'pfw-data'
+$brokerDir = Join-Path $root 'broker'
 $oldPath = $env:PATH
 $oldBindir = $env:PFW_TEST_BINDIR
 $oldHomedir = $env:PFW_TEST_HOMEDIR
@@ -46,7 +49,8 @@ try {
 
   foreach ($iteration in 1..2) {
     $output = & pwsh -NoProfile -File (Join-Path $repo 'install.ps1') `
-      -Uninstall -NoRestartAgent -InstallDirectory $installed 2>&1
+      -Uninstall -NoRestartAgent -InstallDirectory $installed `
+      -DataDirectory $testData -BrokerDirectory $brokerDir 2>&1
     if ($LASTEXITCODE -ne 0) {
       throw "Uninstall run $iteration failed: $($output -join ' | ')"
     }
@@ -65,7 +69,8 @@ try {
   $mixed = "pinentry-program $externalPath`npinentry-program $ownedPath`n"
   [System.IO.File]::WriteAllText($config, $mixed)
   $output = & pwsh -NoProfile -File (Join-Path $repo 'install.ps1') `
-    -Uninstall -NoRestartAgent -InstallDirectory $installed 2>&1
+    -Uninstall -NoRestartAgent -InstallDirectory $installed `
+    -DataDirectory $testData -BrokerDirectory $brokerDir 2>&1
   if ($LASTEXITCODE -eq 0 -or
       [System.IO.File]::ReadAllText($config) -cne $mixed -or
       -not (Test-Path -LiteralPath $ownedPath) -or
@@ -132,7 +137,8 @@ try {
 
   function Confirm-RestorePreviousPinentryProgram { return 'Restore' }
   Uninstall-PinentryForWindows -GpgConfPath (Join-Path $fakeBin 'gpgconf.cmd') `
-    -HomeDirectory $gpgHome -InstallDirectory $installed
+    -HomeDirectory $gpgHome -InstallDirectory $installed `
+    -DataDirectory $testData -BrokerDirectory $brokerDir
   $restored = @(Get-Content -LiteralPath $config)
   if ($restored.Count -ne 2 -or $restored[0] -cne 'default-cache-ttl 300' -or
       $restored[1] -cne "pinentry-program $externalPath" -or
@@ -142,7 +148,105 @@ try {
     throw 'Uninstall did not restore the previous pinentry and remove only the installed binary.'
   }
 
-  Write-Host 'Installer offline install, approval, restore, and uninstall isolation: PASS'
+  $ownedRunValue = '"' + $ownedPath + '" --broker "' + $brokerDir + '"'
+  $foreignRunValue = '"' + $externalPath + '" --broker "' + $brokerDir + '"'
+  if ($null -eq (Get-OwnedBrokerStartup -Value $ownedRunValue -InstalledPaths @($ownedPath)) -or
+      $null -ne (Get-OwnedBrokerStartup -Value $foreignRunValue -InstalledPaths @($ownedPath))) {
+    throw 'Broker autostart ownership was not restricted to the installed executable.'
+  }
+
+  [System.IO.File]::WriteAllText($ownedPath, 'disposable installed binary')
+  New-Item -ItemType Directory -Path (Join-Path $testData 'cache') -Force | Out-Null
+  [System.IO.File]::WriteAllBytes((Join-Path $testData 'cache\hello.cred'), [byte[]](1, 0, 1))
+  New-Item -ItemType Directory -Path $brokerDir -Force | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $brokerDir 'broker.key.dpapi'), 'disposable broker marker')
+  $script:commands = [System.Collections.Generic.List[string]]::new()
+  $script:autostartRemoved = $false
+  function Get-BrokerAutostartValue { return $ownedRunValue }
+  function Invoke-PinentryCommand {
+    param([string]$FilePath, [string[]]$Arguments)
+    [void]$script:commands.Add(($Arguments -join ' '))
+  }
+  function Remove-OwnedBrokerAutostart {
+    param([string]$ExpectedValue)
+    $script:autostartRemoved = $true
+  }
+
+  Uninstall-PinentryForWindows -GpgConfPath (Join-Path $fakeBin 'gpgconf.cmd') `
+    -HomeDirectory $gpgHome -InstallDirectory $installed `
+    -DataDirectory $testData -BrokerDirectory $brokerDir
+  if ($script:commands.Count -ne 2 -or
+      $script:commands[0] -cne "--clear-cache $testData" -or
+      $script:commands[1] -cne "--reset-broker $brokerDir" -or
+      -not $script:autostartRemoved -or
+      (Test-Path -LiteralPath $ownedPath)) {
+    throw 'Uninstall did not clear the cache and broker before removing its executable.'
+  }
+
+  [System.IO.File]::WriteAllText($ownedPath, 'disposable installed binary')
+  $script:autostartRemoved = $false
+  function Invoke-PinentryCommand { throw 'Simulated cache cleanup failure.' }
+  try {
+    Uninstall-PinentryForWindows -GpgConfPath (Join-Path $fakeBin 'gpgconf.cmd') `
+      -HomeDirectory $gpgHome -InstallDirectory $installed `
+      -DataDirectory $testData -BrokerDirectory $brokerDir
+    throw 'Uninstall unexpectedly ignored a cache cleanup failure.'
+  }
+  catch {
+    if ($_.Exception.Message -notlike '*Simulated cache cleanup failure*') { throw }
+  }
+  if (-not (Test-Path -LiteralPath $ownedPath) -or $script:autostartRemoved) {
+    throw 'Uninstall removed the executable or autostart after cache cleanup failed.'
+  }
+
+  function Invoke-PinentryCommand {
+    param([string]$FilePath, [string[]]$Arguments)
+    if ($Arguments[0] -eq '--reset-broker') { throw 'Simulated broker cleanup failure.' }
+  }
+  try {
+    Uninstall-PinentryForWindows -GpgConfPath (Join-Path $fakeBin 'gpgconf.cmd') `
+      -HomeDirectory $gpgHome -InstallDirectory $installed `
+      -DataDirectory $testData -BrokerDirectory $brokerDir
+    throw 'Uninstall unexpectedly ignored a broker cleanup failure.'
+  }
+  catch {
+    if ($_.Exception.Message -notlike '*Simulated broker cleanup failure*') { throw }
+  }
+  if (-not (Test-Path -LiteralPath $ownedPath) -or $script:autostartRemoved) {
+    throw 'Uninstall removed the executable or autostart after broker cleanup failed.'
+  }
+
+  function Get-BrokerAutostartValue { return $foreignRunValue }
+  $script:commands.Clear()
+  function Invoke-PinentryCommand {
+    param([string]$FilePath, [string[]]$Arguments)
+    [void]$script:commands.Add(($Arguments -join ' '))
+  }
+  Uninstall-PinentryForWindows -GpgConfPath (Join-Path $fakeBin 'gpgconf.cmd') `
+    -HomeDirectory $gpgHome -InstallDirectory $installed `
+    -DataDirectory $testData -BrokerDirectory $brokerDir
+  if ($script:commands.Count -ne 1 -or
+      $script:commands[0] -cne "--clear-cache $testData" -or
+      $script:autostartRemoved -or
+      -not (Test-Path -LiteralPath (Join-Path $brokerDir 'broker.key.dpapi')) -or
+      (Test-Path -LiteralPath $ownedPath)) {
+    throw 'Uninstall modified the broker identity or autostart owned by a different executable.'
+  }
+
+  try {
+    Uninstall-PinentryForWindows -GpgConfPath (Join-Path $fakeBin 'gpgconf.cmd') `
+      -HomeDirectory $gpgHome -InstallDirectory $installed `
+      -DataDirectory $testData -BrokerDirectory $brokerDir
+    throw 'Uninstall unexpectedly succeeded without an executable to clear the cache.'
+  }
+  catch {
+    if ($_.Exception.Message -notlike '*No installed Pinentry executable*') { throw }
+  }
+  if (-not (Test-Path -LiteralPath (Join-Path $testData 'cache\hello.cred'))) {
+    throw 'Missing-executable handling altered the unrevoked cache credential.'
+  }
+
+  Write-Host 'Installer offline install, ownership, cleanup, restore, and fail-closed uninstall: PASS'
 }
 finally {
   $env:PATH = $oldPath

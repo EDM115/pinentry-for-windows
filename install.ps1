@@ -2,7 +2,9 @@ param(
   [switch]$Update,
   [switch]$Uninstall,
   [switch]$NoRestartAgent,
-  [string]$InstallDirectory
+  [string]$InstallDirectory,
+  [string]$DataDirectory,
+  [string]$BrokerDirectory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,6 +15,8 @@ $PreviousPinentryProgramPrefix = '# pinentry-for-windows previous-pinentry-progr
 $PinentryExecutablePattern = 'pfw.*.exe'
 $PinentryExecutableRegex = '^pfw\.(x64|arm64)\.exe$'
 $ChecksumAssetName = 'SHA256SUMS.txt'
+$BrokerRunPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$BrokerRunName = 'PinentryForWindowsBroker'
 
 function Write-Step {
   param([Parameter(Mandatory = $true)][string]$Message)
@@ -612,6 +616,92 @@ function Remove-InstalledExecutables {
   }
 }
 
+function Get-BrokerAutostartValue {
+  if (-not (Test-Path -LiteralPath $BrokerRunPath)) {
+    return $null
+  }
+
+  $entry = Get-ItemProperty -LiteralPath $BrokerRunPath -Name $BrokerRunName -ErrorAction SilentlyContinue
+  if ($null -eq $entry) {
+    return $null
+  }
+
+  $property = $entry.PSObject.Properties[$BrokerRunName]
+  return $(if ($null -ne $property) { $property.Value } else { $null })
+}
+
+function Get-OwnedBrokerStartup {
+  param(
+    [string]$Value,
+    [AllowEmptyCollection()][string[]]$InstalledPaths = @()
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Value) -or -not $Value.EndsWith('"')) {
+    return $null
+  }
+
+  foreach ($path in $InstalledPaths) {
+    $prefix = '"' + $path + '" --broker "'
+    if (-not $Value.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+      continue
+    }
+
+    $directory = $Value.Substring($prefix.Length, $Value.Length - $prefix.Length - 1)
+    if ([string]::IsNullOrWhiteSpace($directory) -or -not [System.IO.Path]::IsPathFullyQualified($directory)) {
+      return $null
+    }
+
+    return [pscustomobject]@{
+      ExecutablePath = $path
+      BrokerDirectory = [System.IO.Path]::TrimEndingDirectorySeparator([System.IO.Path]::GetFullPath($directory))
+      Value = $Value
+    }
+  }
+
+  return $null
+}
+
+function Remove-OwnedBrokerAutostart {
+  param([Parameter(Mandatory = $true)][string]$ExpectedValue)
+
+  if ((Get-BrokerAutostartValue) -cne $ExpectedValue) {
+    throw 'Broker autostart changed during uninstall; preserving it for review.'
+  }
+
+  Remove-ItemProperty -LiteralPath $BrokerRunPath -Name $BrokerRunName
+  Write-Step 'Removed broker autostart owned by this installation.'
+}
+
+function Invoke-PinentryCommand {
+  param(
+    [Parameter(Mandatory = $true)][string]$FilePath,
+    [Parameter(Mandatory = $true)][string[]]$Arguments
+  )
+
+  & $FilePath @Arguments
+  if ($LASTEXITCODE -ne 0) {
+    throw "Pinentry cleanup command failed with exit code $LASTEXITCODE."
+  }
+}
+
+function Test-CacheMaterial {
+  param([Parameter(Mandatory = $true)][string]$Directory)
+
+  $cache = Join-Path $Directory 'cache'
+  return (Test-Path -LiteralPath (Join-Path $cache 'hello.cred')) -or
+    ((Test-Path -LiteralPath (Join-Path $cache 'entries')) -and
+    @(Get-ChildItem -LiteralPath (Join-Path $cache 'entries') -Filter '*.bin' -File).Count -gt 0)
+}
+
+function Test-BrokerMaterial {
+  param([Parameter(Mandatory = $true)][string]$Directory)
+
+  return (Test-Path -LiteralPath (Join-Path $Directory 'broker.key.dpapi')) -or
+    (Test-Path -LiteralPath (Join-Path $Directory 'broker.cer')) -or
+    ((Test-Path -LiteralPath (Join-Path $Directory 'clients')) -and
+    @(Get-ChildItem -LiteralPath (Join-Path $Directory 'clients') -Filter '*.origin' -File).Count -gt 0)
+}
+
 function Restart-GpgAgent {
   param([Parameter(Mandatory = $true)][string]$GpgConfPath)
 
@@ -697,12 +787,73 @@ function Uninstall-PinentryForWindows {
   param(
     [Parameter(Mandatory = $true)][string]$GpgConfPath,
     [Parameter(Mandatory = $true)][string]$HomeDirectory,
-    [Parameter(Mandatory = $true)][string]$InstallDirectory
+    [Parameter(Mandatory = $true)][string]$InstallDirectory,
+    [Parameter(Mandatory = $true)][string]$DataDirectory,
+    [string]$BrokerDirectory
   )
 
   $agentConfigPath = Join-Path $HomeDirectory 'gpg-agent.conf'
-  $installedPaths = Get-InstalledPinentryPaths -Directory $InstallDirectory -ConfigPath $agentConfigPath
+  $installedPaths = @(Get-InstalledPinentryPaths -Directory $InstallDirectory -ConfigPath $agentConfigPath)
+  $availableExecutables = @($installedPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+  $autostartValue = Get-BrokerAutostartValue
+  $ownedStartup = Get-OwnedBrokerStartup -Value $autostartValue -InstalledPaths $availableExecutables
+  $resolvedBrokerDirectory = if ($BrokerDirectory) {
+    [System.IO.Path]::TrimEndingDirectorySeparator(
+      [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($BrokerDirectory)))
+  }
+  elseif ($null -ne $ownedStartup) {
+    $ownedStartup.BrokerDirectory
+  }
+  else {
+    Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'PinentryForWindows\broker'
+  }
+
+  if ($null -ne $ownedStartup -and $BrokerDirectory -and
+      -not [string]::Equals($resolvedBrokerDirectory, $ownedStartup.BrokerDirectory,
+        [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Requested broker directory differs from the owned autostart; preserving both for review.'
+  }
+
+  $hasCache = Test-CacheMaterial -Directory $DataDirectory
+  $hasBroker = Test-BrokerMaterial -Directory $resolvedBrokerDirectory
+  if ($hasBroker -and $autostartValue -and $null -eq $ownedStartup) {
+    Write-Step 'Preserving broker identity because autostart belongs to another executable.'
+    $hasBroker = $false
+  }
+
+  if (($hasCache -or $hasBroker) -and $availableExecutables.Count -eq 0) {
+    throw 'No installed Pinentry executable is available to revoke cache or broker material.'
+  }
+
   $configChanged = Remove-PinentryProgramConfig -ConfigPath $agentConfigPath -InstallDirectory $InstallDirectory
+  $preferredExecutable = if ($availableExecutables.Count -gt 0) {
+    $architecture = @(Get-WindowsRuntimeIdentifierCandidates)[0]
+    $availableExecutables | Where-Object {
+      (Split-Path -Leaf $_) -eq "pfw.$architecture.exe"
+    } | Select-Object -First 1
+  }
+  $cleanupExecutable = if ($null -ne $ownedStartup) {
+    $ownedStartup.ExecutablePath
+  }
+  elseif ($preferredExecutable) {
+    $preferredExecutable
+  }
+  elseif ($availableExecutables.Count -gt 0) {
+    $availableExecutables[0]
+  }
+
+  if ($hasCache) {
+    Invoke-PinentryCommand -FilePath $cleanupExecutable -Arguments @('--clear-cache', $DataDirectory)
+  }
+
+  if ($hasBroker) {
+    Invoke-PinentryCommand -FilePath $cleanupExecutable -Arguments @('--reset-broker', $resolvedBrokerDirectory)
+  }
+
+  if ($null -ne $ownedStartup) {
+    Remove-OwnedBrokerAutostart -ExpectedValue $ownedStartup.Value
+  }
+
   Remove-InstalledExecutables -Paths $installedPaths
   Restart-GpgAgentIfNeeded -GpgConfPath $GpgConfPath -ConfigChanged $configChanged
   Write-Step 'Uninstall complete.'
@@ -725,6 +876,15 @@ try {
   $binDirectory = Invoke-GpgConfListDir -GpgConfPath $gpgConfPath -Name 'bindir'
   $homeDirectory = Invoke-GpgConfListDir -GpgConfPath $gpgConfPath -Name 'homedir'
   $resolvedInstallDirectory = Resolve-InstallDirectory -RequestedInstallDirectory $InstallDirectory -DefaultInstallDirectory $binDirectory
+  $resolvedDataDirectory = if ($DataDirectory) {
+    [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($DataDirectory))
+  }
+  elseif ($env:PFW_DATA_DIR) {
+    [System.IO.Path]::GetFullPath($env:PFW_DATA_DIR)
+  }
+  else {
+    Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'PinentryForWindows'
+  }
 
   if (-not $Uninstall -and [string]::IsNullOrWhiteSpace($InstallDirectory) -and -not (Test-Path -LiteralPath $binDirectory)) {
     throw "GnuPG bin directory does not exist: $binDirectory."
@@ -735,7 +895,8 @@ try {
   Write-Step "Using install directory $resolvedInstallDirectory."
 
   if ($Uninstall) {
-    Uninstall-PinentryForWindows -GpgConfPath $gpgConfPath -HomeDirectory $homeDirectory -InstallDirectory $resolvedInstallDirectory
+    Uninstall-PinentryForWindows -GpgConfPath $gpgConfPath -HomeDirectory $homeDirectory `
+      -InstallDirectory $resolvedInstallDirectory -DataDirectory $resolvedDataDirectory -BrokerDirectory $BrokerDirectory
   }
   else {
     Install-LatestRelease -GpgConfPath $gpgConfPath -HomeDirectory $homeDirectory -InstallDirectory $resolvedInstallDirectory -IsUpdate $Update.IsPresent
