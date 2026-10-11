@@ -1,5 +1,15 @@
 # Pinentry For Windows Changelog
 
+## [1.2.1](https://github.com/baliestri/pinentry-for-windows/compare/v1.2.0..1.2.1) - 2026-10-11
+
+### 🐛 Bug Fixes
+
+- SSH fails using gpg-agent authentication - ([8f6750b](https://github.com/baliestri/pinentry-for-windows/commit/8f6750bfade00a8267943fa6e3c1c3e48c8f452e))
+
+## New Contributors ❤️
+
+- @RichardSlater made their first contribution
+
 ## [1.2.0](https://github.com/baliestri/pinentry-for-windows/compare/v1.1.0..v1.2.0) - 2026-07-21
 
 ### 🐛 Bug Fixes
