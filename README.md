@@ -29,12 +29,12 @@ The source is grouped by responsibility: `PinentryForWindows.Core` contains `Com
 
 ## Windows installation
 
-The Windows release assets are `pfw.x64.exe` and `pfw.arm64.exe`. `install.ps1` downloads the matching executable and `SHA256SUMS.txt`, checks its hash, updates the Windows `gpg-agent.conf` with confirmation when another pinentry is configured, and restarts `gpg-agent` unless requested otherwise:
+The Windows release assets are `pfw.x64.exe` and `pfw.arm64.exe`. `tools/install.ps1` downloads the matching executable and `SHA256SUMS.txt`, checks its hash, updates the Windows `gpg-agent.conf` with confirmation when another pinentry is configured, and restarts `gpg-agent` unless requested otherwise:
 
 ```powershell
-./install.ps1
-./install.ps1 -Update
-./install.ps1 -Uninstall
+./tools/install.ps1
+./tools/install.ps1 -Update
+./tools/install.ps1 -Uninstall
 ```
 
 Use `-InstallDirectory <path>` for a nondefault destination and `-NoRestartAgent` to leave the agent running. The installer uses the GnuPG `bindir` by default; that location may require an elevated installation shell. The executable configured in `gpg-agent.conf` is still started as a normal, interactive user process.
@@ -50,7 +50,7 @@ pinentry-program C:/path/to/pfw.x64.exe
 To configure the WSL broker, first create its identity and user-logon startup entry. Run the following as the Windows user, supplying the executable installed above:
 
 ```powershell
-./setup-bridge.ps1 -ExecutablePath 'C:\path\to\pfw.x64.exe'
+./tools/setup-bridge.ps1 -ExecutablePath 'C:\path\to\pfw.x64.exe'
 ```
 
 The script prints the **one-time administrative `reg add` command** for the Hyper-V service ID. Run that command yourself in an elevated Command Prompt. It does not elevate or change HKLM on your behalf. It also prints the location of the broker's public `broker.cer`. The broker's private TLS material is protected using the current Windows user's DPAPI context.
@@ -60,13 +60,13 @@ The script prints the **one-time administrative `reg add` command** for the Hype
 The release assets `pfw-relay-x64` and `pfw-relay-arm64` are Linux Native AOT binaries. From the distribution that owns the `gpg-agent`, install the relay and pin the public broker certificate (adjust the mounted Windows path):
 
 ```bash
-bash install-wsl.sh --broker-certificate /mnt/c/path/to/broker.cer
+bash tools/install-wsl.sh --broker-certificate /mnt/c/path/to/broker.cer
 ```
 
 The script verifies the release checksum, installs the relay under `~/.local/bin`, and creates a client certificate under `~/.config/PinentryForWindows/relay` with a private key accessible only to that Linux user. It prints the path to `client.cer`. On Windows, approve that **public** certificate for the distribution:
 
 ```powershell
-./setup-bridge.ps1 -ExecutablePath 'C:\path\to\pfw.x64.exe' `
+./tools/setup-bridge.ps1 -ExecutablePath 'C:\path\to\pfw.x64.exe' `
   -Distribution archlinux `
   -RelayCertificatePath '\\wsl.localhost\archlinux\home\YOUR_USER\.config\PinentryForWindows\relay\client.cer'
 ```
@@ -74,7 +74,7 @@ The script verifies the release checksum, installs the relay under `~/.local/bin
 The broker starts automatically at the next Windows sign-in; to start it in the current session, use the `pfw.exe --broker <broker-directory>` command printed by the setup script. Once the broker and service registration are ready, activate the WSL agent configuration:
 
 ```bash
-bash install-wsl.sh --broker-certificate /mnt/c/path/to/broker.cer --activate
+bash tools/install-wsl.sh --broker-certificate /mnt/c/path/to/broker.cer --activate
 ```
 
 If `gpg-agent.conf` already names another pinentry, inspect it and pass `--replace` only when you intend to change it. The script backs up that file before changing it. Each additional WSL distribution gets its own relay credential and approval. The broker can serve multiple paired distributions within the WSL2 VM; cache entries remain isolated by the paired certificate identity.
@@ -83,7 +83,7 @@ For a manual WSL configuration, set `pinentry-program /home/YOUR_USER/.local/bin
 
 The current-user relay configuration must live on the Linux filesystem with `0700` directory and `0600` private-key permissions. A Windows drive mounted through DrvFs can report broader Linux permissions even after `chmod`, so the relay refuses to load a key that is not private. WSL1 and noninteractive/headless Windows sessions are outside this release's scope.
 
-For WSL uninstall, first run `bash install-wsl.sh --uninstall`. This removes the relay binary and its GnuPG setting but preserves `client.pfx` and the public `client.cer`, printing the certificate path. Revoke that public certificate on Windows with `pfw.exe --revoke-client <broker-directory> <Windows path to client.cer>` (for example through `\\wsl.localhost\...`). Then run `bash install-wsl.sh --uninstall --revoked-on-windows` to remove the Linux identity, even if the relay binary is already gone. Only supply the confirmation flag after Windows revocation, or after the Windows broker identity has itself been removed.
+For WSL uninstall, first run `bash tools/install-wsl.sh --uninstall`. This removes the relay binary and its GnuPG setting but preserves `client.pfx` and the public `client.cer`, printing the certificate path. Revoke that public certificate on Windows with `pfw.exe --revoke-client <broker-directory> <Windows path to client.cer>` (for example through `\\wsl.localhost\...`). Then run `bash tools/install-wsl.sh --uninstall --revoked-on-windows` to remove the Linux identity, even if the relay binary is already gone. Only supply the confirmation flag after Windows revocation, or after the Windows broker identity has itself been removed.
 
 ## Passphrase cache and hardware tokens
 

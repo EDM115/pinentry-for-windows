@@ -8,6 +8,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$installer = Join-Path $repo 'tools/install.ps1'
 $root = Join-Path $repo 'artifacts' ('installer-test-' + [Guid]::NewGuid().ToString('N'))
 $fakeBin = Join-Path $root 'fake-bin'
 $installed = Join-Path $root 'installed'
@@ -48,7 +49,7 @@ try {
   [System.IO.File]::WriteAllText($config, $original)
 
   foreach ($iteration in 1..2) {
-    $output = & pwsh -NoProfile -File (Join-Path $repo 'install.ps1') `
+    $output = & pwsh -NoProfile -File $installer `
       -Uninstall -NoRestartAgent -InstallDirectory $installed `
       -DataDirectory $testData -BrokerDirectory $brokerDir 2>&1
     if ($LASTEXITCODE -ne 0) {
@@ -68,7 +69,7 @@ try {
   [System.IO.File]::WriteAllText($ownedPath, 'disposable installed binary')
   $mixed = "pinentry-program $externalPath`npinentry-program $ownedPath`n"
   [System.IO.File]::WriteAllText($config, $mixed)
-  $output = & pwsh -NoProfile -File (Join-Path $repo 'install.ps1') `
+  $output = & pwsh -NoProfile -File $installer `
     -Uninstall -NoRestartAgent -InstallDirectory $installed `
     -DataDirectory $testData -BrokerDirectory $brokerDir 2>&1
   if ($LASTEXITCODE -eq 0 -or
@@ -80,7 +81,6 @@ try {
 
   # Load the actual installer functions without executing its entry point. Stub
   # only release discovery/download so installation stays entirely offline.
-  $installer = Join-Path $repo 'install.ps1'
   $source = [System.IO.File]::ReadAllText($installer)
   $tokens = $null
   $parseErrors = $null

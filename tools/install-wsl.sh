@@ -66,7 +66,7 @@ if "$uninstall"; then
     printf 'Revoke this public client certificate on Windows before removing the Linux identity:\n'
     printf '  %s\n' "${config_dir}/client.cer"
     printf 'On Windows: pfw.exe --revoke-client <broker-directory> <Windows path to client.cer>\n'
-    printf 'Then rerun: bash install-wsl.sh --uninstall --revoked-on-windows\n'
+    printf 'Then rerun: bash tools/install-wsl.sh --uninstall --revoked-on-windows\n'
   fi
 
   if [[ -f "$installed" ]]; then rm -- "$installed"; fi
@@ -105,7 +105,7 @@ if [[ -n "$broker_certificate" ]]; then
 fi
 
 printf 'Relay installed at: %s\n' "$installed"
-printf 'Give this public certificate to setup-bridge.ps1 on Windows: %s\n' "${config_dir}/client.cer"
+printf 'Give this public certificate to tools/setup-bridge.ps1 on Windows: %s\n' "${config_dir}/client.cer"
 if [[ ! -f "${config_dir}/broker.cer" ]]; then
   printf 'Broker public certificate is not pinned yet; run with --broker-certificate before activation.\n'
 fi

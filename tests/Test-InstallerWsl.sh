@@ -45,13 +45,13 @@ printf 'disposable broker pin\n' > "${config_dir}/broker.cer"
 printf 'unrelated setting\n' > "${config_dir}/keep.txt"
 printf 'default-cache-ttl 300\npinentry-program %s\n' "$installed" > "${root}/gnupg/gpg-agent.conf"
 
-if bash "${repo}/install-wsl.sh" --revoked-on-windows > "${root}/invalid-output" 2>&1; then
+if bash "${repo}/tools/install-wsl.sh" --revoked-on-windows > "${root}/invalid-output" 2>&1; then
   printf 'Revocation flag was accepted without uninstall.\n' >&2
   exit 1
 fi
 [[ -f "${config_dir}/client.pfx" ]] || { printf 'Invalid invocation altered private key.\n' >&2; exit 1; }
 
-bash "${repo}/install-wsl.sh" --uninstall > "${root}/first-output"
+bash "${repo}/tools/install-wsl.sh" --uninstall > "${root}/first-output"
 if ! grep -qi 'revoke' "${root}/first-output"; then
   printf 'Uninstall did not explain Windows revocation before identity removal.\n' >&2
   exit 1
@@ -64,7 +64,7 @@ if grep -q '^pinentry-program ' "${root}/gnupg/gpg-agent.conf"; then
 fi
 
 install -m 755 "${root}/relay-stub" "$installed"
-bash "${repo}/install-wsl.sh" --uninstall --revoked-on-windows > "${root}/second-output"
+bash "${repo}/tools/install-wsl.sh" --uninstall --revoked-on-windows > "${root}/second-output"
 [[ ! -e "$installed" && ! -e "${config_dir}/client.pfx" &&
    ! -e "${config_dir}/client.cer" && ! -e "${config_dir}/broker.cer" ]]
 [[ -f "${config_dir}/keep.txt" ]]
@@ -72,7 +72,7 @@ grep -Fq -- "--remove-identity ${config_dir}" "${root}/calls"
 
 printf 'disposable private key\n' > "${config_dir}/client.pfx"
 printf 'disposable public certificate\n' > "${config_dir}/client.cer"
-bash "${repo}/install-wsl.sh" --uninstall --revoked-on-windows > "${root}/fallback-output"
+bash "${repo}/tools/install-wsl.sh" --uninstall --revoked-on-windows > "${root}/fallback-output"
 [[ ! -e "${config_dir}/client.pfx" && ! -e "${config_dir}/client.cer" ]]
 [[ -f "${config_dir}/keep.txt" ]]
 printf 'WSL installer revocation-confirmation and cleanup isolation: PASS\n'
