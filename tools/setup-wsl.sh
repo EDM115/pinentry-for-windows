@@ -66,7 +66,7 @@ if "$uninstall"; then
     printf 'Revoke this public client certificate on Windows before removing the Linux identity:\n'
     printf '  %s\n' "${config_dir}/client.cer"
     printf 'On Windows: pfw.exe --revoke-client <broker-directory> <Windows path to client.cer>\n'
-    printf 'Then rerun: bash tools/install-wsl.sh --uninstall --revoked-on-windows\n'
+    printf 'Then rerun: bash tools/setup-wsl.sh --uninstall --revoked-on-windows\n'
   fi
 
   if [[ -f "$installed" ]]; then rm -- "$installed"; fi

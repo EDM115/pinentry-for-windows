@@ -45,7 +45,7 @@ separately; Windows and WSL private keys are never copied between them.
 Download this repository (or clone it), open PowerShell in its root directory, and run:
 
 ```powershell
-pwsh -NoProfile -File .\tools\install.ps1
+pwsh -NoProfile -File .\tools\setup.ps1
 ```
 
 The installer chooses `pfw.x64.exe` or `pfw.arm64.exe`, verifies its release SHA-256 checksum, configures the **Windows**
@@ -93,7 +93,7 @@ public certificates; the relay never receives the broker's private key.
    the mounted path of the `broker.cer` printed in step 1:
 
    ```bash
-   bash tools/install-wsl.sh --broker-certificate /mnt/c/path/to/broker.cer
+   bash tools/setup-wsl.sh --broker-certificate /mnt/c/path/to/broker.cer
    ```
 
    The script verifies the download and creates a Linux-only private identity under
@@ -112,7 +112,7 @@ public certificates; the relay never receives the broker's private key.
    and back in to use the configured startup entry. Then activate the relay in WSL:
 
    ```bash
-   bash tools/install-wsl.sh --broker-certificate /mnt/c/path/to/broker.cer --activate
+   bash tools/setup-wsl.sh --broker-certificate /mnt/c/path/to/broker.cer --activate
    ```
 
    If WSL's `gpg-agent.conf` already has another pinentry, inspect it first; pass `--replace` only if you want to change
@@ -174,15 +174,15 @@ events never include passphrases, key descriptions, grips, or certificates.
 
 ## Uninstall
 
-On Windows, run `pwsh -NoProfile -File .\tools\install.ps1 -Uninstall`. It removes only its own GnuPG setting, clears
+On Windows, run `pwsh -NoProfile -File .\tools\setup.ps1 -Uninstall`. It removes only its own GnuPG setting, clears
 the persistent cache and associated broker material, and removes its own HKCU startup entry before deleting the binary.
 Use `-DataDirectory` or `-BrokerDirectory` if you changed their defaults. It does **not** remove the HKLM Hyper-V service
 registration or stop a broker already running; remove the registration with elevation when no installation uses it.
 
-For WSL, first run `bash tools/install-wsl.sh --uninstall`. It removes the agent setting and relay executable but prints
+For WSL, first run `bash tools/setup-wsl.sh --uninstall`. It removes the agent setting and relay executable but prints
 and preserves the public `client.cer` so you can revoke it on Windows with
 `pfw.exe --revoke-client <broker-directory> <Windows path to client.cer>`. Then run
-`bash tools/install-wsl.sh --uninstall --revoked-on-windows` to remove the Linux identity. Use that last flag only after
+`bash tools/setup-wsl.sh --uninstall --revoked-on-windows` to remove the Linux identity. Use that last flag only after
 revocation (or after the Windows broker identity has itself been removed).
 
 ## Technical reference

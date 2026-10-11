@@ -8,7 +8,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$installer = Join-Path $repo 'tools/install.ps1'
+$installer = Join-Path $repo 'tools/setup.ps1'
 $root = Join-Path $repo 'artifacts' ('installer-test-' + [Guid]::NewGuid().ToString('N'))
 $fakeBin = Join-Path $root 'fake-bin'
 $installed = Join-Path $root 'installed'

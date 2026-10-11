@@ -25,8 +25,8 @@
     <Project Path="tests/PinentryForWindows.Tests/PinentryForWindows.Tests.csproj" />
   </Folder>
   <Folder Name="/Tools/">
-    <File Path="tools/install-wsl.sh" />
-    <File Path="tools/install.ps1" />
+    <File Path="tools/setup.ps1" />
     <File Path="tools/setup-bridge.ps1" />
+    <File Path="tools/setup-wsl.sh" />
   </Folder>
 </Solution>
