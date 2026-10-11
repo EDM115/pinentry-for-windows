@@ -98,6 +98,10 @@ internal static class AssuanRelay {
           }
 
           _greeted = true;
+          if (_inputClosed && _pending == 0) {
+            _drained.TrySetResult();
+          }
+
           return;
         }
 
@@ -117,7 +121,7 @@ internal static class AssuanRelay {
     public Task WaitForDrainAsync(CancellationToken ct) {
       lock (_sync) {
         _inputClosed = true;
-        if (_pending == 0) {
+        if (_greeted && _pending == 0) {
           _drained.TrySetResult();
         }
       }
@@ -127,6 +131,10 @@ internal static class AssuanRelay {
 
     public void OutputClosed() {
       lock (_sync) {
+        if (!_greeted) {
+          throw new EndOfStreamException("Broker closed before the Assuan greeting.");
+        }
+
         if (_pending > 0) {
           throw new EndOfStreamException("Broker closed during an Assuan command.");
         }

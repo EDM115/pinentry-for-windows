@@ -31,6 +31,29 @@ public sealed class RelayForwardingTests {
     Assert.Equal("OK ready\nOK\n", Encoding.UTF8.GetString(output.ToArray()));
   }
 
+  [Fact]
+  public async Task Broker_close_before_greeting_is_reported_even_without_a_pending_command() {
+    using var input = new MemoryStream();
+    using var output = new MemoryStream();
+    await using var server = new DelayedServer(greeting: "");
+    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+    await Assert.ThrowsAsync<EndOfStreamException>(() =>
+      AssuanRelay.RunAsync(input, output, server, deadline.Token));
+    Assert.Empty(output.ToArray());
+  }
+
+  [Fact]
+  public async Task Input_eof_waits_for_a_delayed_broker_greeting() {
+    using var input = new MemoryStream();
+    using var output = new MemoryStream();
+    await using var server = new DelayedServer(greetingDelay: TimeSpan.FromMilliseconds(100));
+    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+    await AssuanRelay.RunAsync(input, output, server, deadline.Token);
+    Assert.Equal("OK ready\n", Encoding.UTF8.GetString(output.ToArray()));
+  }
+
   private sealed class BlockingInput : Stream {
     private readonly TaskCompletionSource<int> _closed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _reads;
@@ -71,7 +94,8 @@ public sealed class RelayForwardingTests {
       => throw new NotSupportedException();
   }
 
-  private sealed class DelayedServer(string response = "D dummy%25secret\nOK\n") : Stream {
+  private sealed class DelayedServer(string response = "D dummy%25secret\nOK\n", string greeting = "OK ready\n",
+    TimeSpan? greetingDelay = null) : Stream {
     private readonly TaskCompletionSource _command = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly MemoryStream _input = new();
     private int _readState;
@@ -95,8 +119,13 @@ public sealed class RelayForwardingTests {
       var state = Interlocked.Increment(ref _readState);
       switch (state) {
         case 1:
-          "OK ready\n"u8.CopyTo(buffer.Span);
-          return "OK ready\n"u8.Length;
+          if (greetingDelay is { } delay) {
+            await Task.Delay(delay, cancellationToken);
+          }
+
+          var greetingBytes = Encoding.UTF8.GetBytes(greeting);
+          greetingBytes.CopyTo(buffer);
+          return greetingBytes.Length;
         case 2: {
           await _command.Task.WaitAsync(cancellationToken);
           await Task.Delay(50, cancellationToken);
