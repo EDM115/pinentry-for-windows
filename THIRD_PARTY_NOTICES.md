@@ -2,7 +2,8 @@
 
 ## Ookii.VmSockets
 
-The endpoint layout and socket family handling were informed by Ookii.VmSockets. The package is not a runtime dependency.
+The endpoint layout and socket family handling were informed by Ookii.VmSockets. The package is not a runtime
+dependency.
 
 MIT License
 

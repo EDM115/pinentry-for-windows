@@ -94,7 +94,8 @@ public sealed class RelayForwardingTests {
       => throw new NotSupportedException();
   }
 
-  private sealed class DelayedServer(string response = "D dummy%25secret\nOK\n", string greeting = "OK ready\n",
+  private sealed class DelayedServer(string response = "D dummy%25secret\nOK\n",
+    string greeting = "OK ready\n",
     TimeSpan? greetingDelay = null) : Stream {
     private readonly TaskCompletionSource _command = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly MemoryStream _input = new();

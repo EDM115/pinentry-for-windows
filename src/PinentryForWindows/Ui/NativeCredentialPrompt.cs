@@ -56,6 +56,7 @@ internal static unsafe partial class NativeCredentialPrompt {
             input, inputLength, out output, out outputLength, ref save, flags);
         }
         finally { PinentryLatency.Record(request.GetPinTimestamp, beforeCall); }
+
         if (result == ERROR_CANCELLED) {
           return null;
         }
