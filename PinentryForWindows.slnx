@@ -16,6 +16,9 @@
     <Project Path="src/PinentryForWindows.Relay/PinentryForWindows.Relay.csproj" />
   </Folder>
   <Folder Name="/Tests/">
+    <File Path="tests/Measure-PinentryLatency.ps1" />
+    <File Path="tests/Test-InstallerConfig.ps1" />
+    <File Path="tests/Test-InstallerWsl.sh" />
     <File Path="tests/Test-PinentryForWindows.ps1" />
     <Project Path="tests/PinentryForWindows.Core.Tests/PinentryForWindows.Core.Tests.csproj" />
     <Project Path="tests/PinentryForWindows.Relay.Tests/PinentryForWindows.Relay.Tests.csproj" />
